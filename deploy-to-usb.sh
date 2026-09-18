@@ -110,7 +110,12 @@ main() {
             delete_existing_partition_table "$TARGET_DRIVE"
             ;;
         update_linux_partition)
-            update_linux_partition
+            if [[ -z "${TARGET_DRIVE:-}" || -z "${ISO_PATH:-}" ]]; then
+                echo "[!] update_linux_partition requires --target-drive and --iso." >&2
+                usage >&2
+                exit 1
+            fi
+            update_linux_partition "$TARGET_DRIVE" "$ISO_PATH"
             ;;
         all)
             if [[ -z "${TARGET_DRIVE:-}" ]]; then
@@ -204,6 +209,9 @@ debug() {
     printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
 }
 
+error() {
+    printf '\033[31mERROR: %s\033[0m\n' "$*" >&2
+}
 usage() {
     cat <<EOF
 Usage: sudo $0 [options] [step]
@@ -457,7 +465,7 @@ deploy_iso_to_partition() {
         list_sticks
     fi
 
-    LINUX_PARTITION=$(lsblk -nrpo NAME,TYPE "$TARGET_DRIVE" |
+    local LINUX_PARTITION=$(lsblk -nrpo NAME,TYPE "$TARGET_DRIVE" |
     awk '$2 == "part" { print $1; exit }')
 
     if [[ -z "$LINUX_PARTITION" || ! -b "$LINUX_PARTITION" ]]; then
@@ -472,8 +480,8 @@ deploy_iso_to_partition() {
     fi
 
     debug "** Checking if the ISO fits in the first partition..."
-    ISO_SIZE_BYTES=$(stat -c '%s' "$ISO_PATH")
-    LINUX_PARTITION_SIZE_BYTES=$(blockdev --getsize64 "$LINUX_PARTITION")
+    local ISO_SIZE_BYTES=$(stat -c '%s' "$ISO_PATH")
+    local LINUX_PARTITION_SIZE_BYTES=$(blockdev --getsize64 "$LINUX_PARTITION")
     if (( ISO_SIZE_BYTES > LINUX_PARTITION_SIZE_BYTES )); then
         error "[!] ISO does not fit in partition 1." >&2
         exit 1
@@ -508,14 +516,14 @@ update_linux_partition() {
         error "[!] Target must be a whole disk, not a partition: $TARGET_DRIVE" >&2
         exit 1
     fi
-    check_target_is_not_system_disk
+    check_target_is_not_system_disk "$TARGET_DRIVE"
 
     if [ ! -f "$ISO_PATH" ]; then
         error "[!] ISO file not found: $ISO_PATH" >&2
         exit 1
     fi
 
-    linux_partition="$(lsblk -lnpo NAME "$TARGET_DRIVE" | sed -n '2p')"
+    linux_partition=$(lsblk -nrpo NAME,TYPE "$TARGET_DRIVE" | awk '$2 == "part" { print $1; exit }')
     if [ -z "$linux_partition" ] || [ ! -b "$linux_partition" ]; then
         error "[!] First partition not found on $TARGET_DRIVE." >&2
         exit 1
@@ -524,24 +532,32 @@ update_linux_partition() {
     iso_size_bytes=$(stat -c '%s' "$ISO_PATH")
     partition_size_bytes=$(blockdev --getsize64 "$linux_partition")
     if (( iso_size_bytes > partition_size_bytes )); then
-        error "[!] ISO does not fit in $linux_partition." >&2
+        error "[!] ISO does not fit in $linux_partition. $iso_size_bytes > $partition_size_bytes" >&2
         exit 1
     fi
 
-    echo "========================================================"
+    if ! mountpoint -q "$linux_partition"; then
+        debug "[*] $linux_partition is not mounted."
+    else
+        sudo umount "$linux_partition" || {
+            error "[!] Could not unmount $linux_partition before writing the ISO." >&2
+            exit 1
+        }
+    fi
+
+    echo "--------------------------------------------------------"
     echo "WARNING: Only $linux_partition will be overwritten."
     echo "Partition 2 and the partition table will not be changed."
     echo "ISO: $ISO_PATH"
-    echo "========================================================"
+    echo "--------------------------------------------------------"
     read -r -p "Continue? (yes/NO): " confirmation
     if [ "$confirmation" != yes ]; then
         error "Aborted."
         exit 1
     fi
 
-    sudo umount "$linux_partition" 2>/dev/null || true
     debug "[*] Writing ISO image to $linux_partition... Please wait."
-    pv "$ISO_PATH" | sudo dd of="$linux_partition" bs=8M conv=fsync oflag=direct
+    pv "$ISO_PATH" | sudo dd of="$linux_partition" bs=8M conv=fsync status=progress
     sudo partprobe "$TARGET_DRIVE" 2>/dev/null || true
     debug "[*] Updated $linux_partition. Partition 2 was not modified."
 }

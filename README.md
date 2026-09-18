@@ -1,105 +1,89 @@
-# Creating and Deploying an MX Linux USB
+# Custom antiX / MX Live ISO Builder
 
-This project creates a customized, hybrid-bootable MX Linux ISO and deploys it
-to a USB drive. Customizations are performed inside an extracted chroot
-filesystem. The USB deployment also creates an encrypted exFAT data partition
-that can be unlocked on Linux and Windows with VeraCrypt.
+This project builds a customized, hybrid-bootable antiX or MX Linux ISO from a source ISO, modifies the extracted live system in a chroot, and then rebuilds the live filesystem and bootable image.
 
-## System Requirements
+The project focuses on the active build workflow used for live ISO customization and USB deployment. Older helper scripts kept in an archive directory are not part of the main documentation.
 
-- Tested on Ubuntu 26.04
-- A Debian-based Linux system, preferably MX Linux
-- A valid MX Linux ISO, such as MX 25 Xfce x64
-- Bash
-- Root privileges; the script currently expects to be run with `sudo`
-- Internet access for package installation inside the chroot
-- Sufficient free disk space for the extracted filesystem and the rebuilt ISO
-- Sufficient RAM and CPU time for SquashFS compression
-- A USB drive with enough capacity for the Linux partition and data partition
-- VeraCrypt for the USB deployment step
+## What this project does
 
-The host system must provide these commands:
+- extracts a source ISO into a working directory
+- mounts the live filesystem and unpacks its `antiX/linuxfs`
+- customizes the system inside a chroot
+- rebuilds the SquashFS live system
+- creates a final bootable ISO
+- writes the ISO to a USB stick with a second encrypted data partition
 
-- `apt-get`
+## Main scripts
+
+- `iso-change.sh` — main ISO creation workflow
+- `deploy-to-usb.sh` — deploys the generated ISO to USB and creates the encrypted data partition
+
+Archive or legacy helper scripts are intentionally not documented here because they are not part of the current active workflow.
+
+## Requirements
+
+- Debian-based Linux host, preferably MX Linux or Ubuntu
+- root privileges via `sudo`
+- valid antiX or MX Linux ISO
+- internet access when packages are installed inside the chroot
+- enough disk space for the extracted live system and rebuilt image
+- USB drive large enough for the Linux + data partitions
+
+Required host tools:
+
 - `bash`
+- `sudo`
+- `mount` / `umount`
+- `rsync`
+- `unsquashfs` / `mksquashfs`
+- `xorriso`
 - `chroot`
 - `findmnt`
-- `mount` and `umount`
 - `realpath`
-- `rsync`
 - `md5sum`
-- `mksquashfs` and `unsquashfs`
-- `xorriso`
-- `sudo`
+- `lsblk`
+- `parted`
+- `partprobe`
+- `dd`
 
-The required packages `squashfs-tools`, `xorriso`, and `rsync` are installed by
-`system_prepare`. The other commands are normally included in a standard
-Debian or MX Linux installation. The deployment script additionally requires
-`veracrypt`, `parted`, `partprobe`, `lsblk`, and `dd`.
+The script installs the packages needed for the ISO build step, especially `squashfs-tools`, `xorriso`, and `rsync`.
 
-## Usage
+## Quick start
 
 Show help:
 
 ```bash
-./create-with-iso-mx.sh --help
+sudo ./iso-change.sh --help
 ```
 
-The default ISO path is:
-
-```text
-/home/fsteinha/Downloads/MX-25_Xfce_x64.iso
-```
-
-You can specify a different ISO or working directory:
+Build a custom ISO from a source image:
 
 ```bash
-sudo ./create-with-iso-mx.sh \
-  --iso /path/to/mx-linux.iso \
-  --workdir ./mx-work all
+sudo ./iso-change.sh \
+  --iso-input /path/to/source.iso \
+  --workdir ./work \
+  --iso-output ./custom-linux.iso \
+  all
 ```
 
-## Commands
-
-| Command | Description |
-| --- | --- |
-| `clean` | Delete the working directory after confirmation |
-| `system_check` | Check required system commands |
-| `system_prepare` | Install required system packages |
-| `prepare` | Clean the working directory and prepare the system |
-| `linuxfs` | Mount the ISO, copy files, and extract `linuxfs` |
-| `customize` | Install packages in the chroot |
-| `shell` | Open an interactive shell in the chroot |
-| `new_mx_squashfs` | Unmount the chroot and create a new SquashFS |
-| `create_final_iso` | Create the final bootable ISO |
-| `all` | Run all build steps in sequence |
-
-Commands can be run individually, for example:
+Create the final ISO file in the working directory:
 
 ```bash
-sudo ./create-with-iso-mx.sh system_check
-sudo ./create-with-iso-mx.sh system_prepare
-sudo ./create-with-iso-mx.sh prepare
+sudo ./iso-change.sh \
+  --workdir ./work \
+  --iso-output ./custom-linux.iso \
+  make_iso
 ```
 
-## Interactive Chroot Shell
-
-After `linuxfs`, you can open a shell inside the extracted MX filesystem:
+Deploy the ISO to a USB drive:
 
 ```bash
-sudo ./create-with-iso-mx.sh shell
+sudo ./deploy-to-usb.sh
 ```
 
-Use `exit` to leave the shell. The mounts created by the script are then cleaned
-up automatically.
+## Build workflow
 
-## Complete Workflow
-
-```bash
-sudo ./create-with-iso-mx.sh all
-```
-
-`all` runs these steps:
+The standard build sequence is:
 
 ```text
 prepare
@@ -109,74 +93,31 @@ new_mx_squashfs
 create_final_iso
 ```
 
-The finished ISO is created at:
+The final ISO is created as:
 
 ```text
-./mx-work/custom-mx-linux.iso
+./custom-linux.iso
 ```
 
-## Deploying to USB
+## Working directories
 
-After creating the ISO, use `deploy-to-usb.sh` to write it to a USB drive:
+The script uses these folders under the working directory:
 
-```bash
-sudo ./deploy-to-usb.sh
-```
+- `work/mnt` — mounted source ISO
+- `work/chroot` — extracted live root filesystem for modifications
+- `work/image` — rebuilt ISO content before packaging
 
-The script uses an ISO path below the invoking user's home directory by default:
+## USB layout
 
-```text
-$HOME/mx-work/custom-mx-linux.iso
-```
+The USB deployment script creates a hybrid USB with two main partitions:
 
-Adjust `ISO_PATH` in `deploy-to-usb.sh` if the ISO is stored elsewhere. The
-script asks you to select the target drive and type `yes` as a final confirmation.
+1. Partition 1: bootable Linux ISO image
+2. Partition 2: VeraCrypt-encrypted exFAT data partition
 
-To update only the existing Linux/ISO partition after changing the extracted
-filesystem, first rebuild the SquashFS and ISO:
+## Important warning
 
-```bash
-sudo ./create-with-iso-mx.sh \
-  --workdir /home/fsteinha/project/livelinux \
-  new_mx_squashfs
-sudo ./create-with-iso-mx.sh \
-  --workdir /home/fsteinha/project/livelinux \
-  create_final_iso
-```
+The USB deployment script completely erases the selected target drive, including its partition table and existing data. Select the correct device carefully and never target the system disk.
 
-Then update partition 1 without changing the partition table or partition 2:
+## Notes
 
-```bash
-sudo ./deploy-to-usb.sh \
-  --iso /home/fsteinha/project/livelinux/custom-mx-linux.iso \
-  --target-drive /dev/sdX \
-  update_linux_partition
-```
-
-Replace `/dev/sdX` with the whole USB disk, not its partition. The existing
-`all` step remains destructive and recreates the complete USB layout.
-
-The USB drive is configured as follows:
-
-| Partition | Purpose |
-| --- | --- |
-| Partition 1 | Custom MX Linux ISO image |
-| Partition 2 | VeraCrypt-encrypted exFAT data partition |
-
-The Linux partition is `15 GB` by default. The data partition is `10 GB` by
-default and uses the remaining space when `--encrypted-size 0` is selected.
-These values can be changed with the command-line options of
-`deploy-to-usb.sh`.
-
-### Important Warning
-
-Deployment completely erases the selected USB drive, including its partition
-table and all existing data. Check the selected device carefully before
-confirming. Do not select your system disk.
-
-The VeraCrypt password is required later to unlock the encrypted data
-partition. Windows computers need VeraCrypt to access this partition.
-
-When installing `cryptsetup`, the following warning may appear in the chroot:
-`Couldn't determine root device`. This is expected in this environment as long
-as the package installation completes successfully.
+This repository is designed for rebuilding and customizing a live antiX/MX Linux environment. It is not a general-purpose package manager project and it is not meant to document every archived helper script from older experiments.

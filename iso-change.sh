@@ -14,13 +14,14 @@ main() {
     MNT_DIR="$WORK_DIR/mnt"
     CHROOT_DIR="$WORK_DIR/chroot"
     IMAGE_DIR="$WORK_DIR/image"
+    ISO_OUTPUT="./custom-linux.iso"
 
     POSITIONAL=()
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --iso)
+            --iso-input)
                 ISO_SRC="$2"
                 shift 2
                 ;;
@@ -28,17 +29,21 @@ main() {
                 WORK_DIR="$2"
                 shift 2
                 ;;
-            --help|-h)
-                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR
-                exit 0
+            --iso-output)
+                ISO_OUTPUT="$2"
+                shift 2
                 ;;
-            clean|system_check|system_prepare|prepare|linuxfs|customize|shell|new_mx_squashfs|create_final_iso|all)
+            --help|-h)
+                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR $ISO_OUTPUT
+                exit 0
+                ;;                
+            clean|system_check|system_prepare|prepare|extract|customize|shell|make_iso|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
             *)
                 error "Unknown parameter: $1"
-                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR  
+                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR $ISO_OUTPUT
                 exit 1
                 ;;
         esac
@@ -69,7 +74,7 @@ main() {
             prepare)
                 prepare "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
-            linuxfs)
+            extract)
                 linuxfs "$WORK_DIR" "$MNT_DIR" "$ISO_SRC" "$IMAGE_DIR"
                 ;;
             customize)
@@ -78,10 +83,8 @@ main() {
             shell)
                 shell "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
-            new_mx_squashfs)
+            make_iso)
                 new_mx_squashfs "$IMAGE_DIR" "$CHROOT_DIR"
-                ;;
-            create_final_iso)
                 create_final_iso "$WORK_DIR" "$IMAGE_DIR"
                 ;;
             all)
@@ -93,7 +96,7 @@ main() {
                 ;;
             *)
                 echo "Unknown step: $STEP"
-                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR  
+                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR $ISO_OUTPUT
                 exit 1
                 ;;
         esac
@@ -139,7 +142,7 @@ usage() {
     IMAGE_DIR=$6
 
     cat <<EOF2
-Usage: $0 [--iso <path>] [--workdir <path>] [command]
+Usage: $0 [--iso-input <path>] [--workdir <path>] [--iso-output <path>] [command]
 
 Default values:
   ISO:          $ISO_SRC
@@ -148,19 +151,19 @@ Default values:
   MNT_DIR:      $MNT_DIR
   CHROOT:       $CHROOT_DIR
   IMAGE:        $IMAGE_DIR
-  
+  ISO_OUTPUT:   $ISO_OUTPUT
+
 Commands:
     system_check       check required system commands
     system_prepare     install required system packages
 
     clean              delete the work directory after confirmation
     prepare            run clean, ensure work directories, and run system_prepare
-    linuxfs            mount ISO, copy files, and uncompress linuxfs
+    extract            mount ISO, copy files, and uncompress linuxfs
     customize          prepare chroot and run commands inside chroot
     shell              open an interactive shell inside the chroot
-    new_mx_squashfs    unmount chroot and rebuild linuxfs
-    create_final_iso   create final hybrid bootable ISO
-    all                run prepare, linuxfs, customize, new_mx_squashfs, and create_final_iso
+    make_iso           create final hybrid bootable ISO
+    all                run prepare, extract, customize, make_iso
 EOF2
 }
 
@@ -226,16 +229,16 @@ system_prepare() {
 # $2: CHROOT_DIR
 # $3: IMAGE_DIR
 ensure_workdirs() {
-    WORK_DIR=$1
-    CHROOT_DIR=$2
-    IMAGE_DIR=$3
+    local WORK_DIR=$1
+    local CHROOT_DIR=$2
+    local IMAGE_DIR=$3
     mkdir -p "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
 }
 
 # function to clean up workdir and unmount any mounts
 # $1: WORK_DIR
 cleanup_workdir() {
-    WORK_DIR=$1
+    local WORK_DIR=$1
     if [ -d "$WORK_DIR" ]; then
         mountpoints=$(findmnt -rn -o TARGET | awk -v base="$WORK_DIR" '$1 == base || index($1, base "/") == 1' | sort -r)
         if [ -n "$mountpoints" ]; then
@@ -251,9 +254,9 @@ cleanup_workdir() {
 # $2: CHROOT_DIR
 # $3: IMAGE_DIR
 prepare() {
-    WORK_DIR=$1
-    CHROOT_DIR=$2
-    IMAGE_DIR=$3
+    local WORK_DIR=$1
+    local CHROOT_DIR=$2
+    local IMAGE_DIR=$3
     clean "$WORK_DIR"
     echo "=== Prepare, install tools ==="
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
@@ -265,14 +268,14 @@ prepare() {
 # $2: CHROOT_DIR
 # $3: IMAGE_DIR
 customize() {
-    WORK_DIR=$1
-    CHROOT_DIR=$2
-    IMAGE_DIR=$3
+    local WORK_DIR=$1
+    local CHROOT_DIR=$2
+    local IMAGE_DIR=$3
     echo "=== Customize MX-Chroot ==="
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
 
-    if ! chroot_mounts_ready; then
-        mount_for_chroot
+    if ! chroot_mounts_ready "$CHROOT_DIR"; then
+        mount_for_chroot "$CHROOT_DIR" "$WORK_DIR" "$IMAGE_DIR"
     else
         echo "Chroot mounts already exist."
     fi
@@ -291,7 +294,7 @@ EOF2
 # function to clean up work directory
 # $1: WORK_DIR
 clean() {
-    WORK_DIR=$1
+    local WORK_DIR=$1
     echo "clean $WORK_DIR"
     if [ -d "$WORK_DIR" ]; then
         warning "Work directory $WORK_DIR already exists. It will be deleted."
@@ -308,7 +311,7 @@ clean() {
 # function to check if chroot mounts are ready
 # $1: CHROOT_DIR
 chroot_mounts_ready() {
-    CHROOT_DIR=$1
+    local CHROOT_DIR=$1
     local mountpoint
 
     for mountpoint in \
@@ -329,8 +332,12 @@ chroot_mounts_ready() {
 # function to mount chroot directories
 # $1: CHROOT_DIR
 mount_for_chroot() {
-    CHROOT_DIR=$1
-    echo "=== Mounting chroot directories ==="
+    local CHROOT_DIR=$1
+    local WORK_DIR=$2
+    local IMAGE_DIR=$3
+    
+    echo "* mounting chroot directories ==="
+    
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
 
     mountpoint -q "$CHROOT_DIR/dev" || \
@@ -350,14 +357,14 @@ mount_for_chroot() {
 # $2: CHROOT_DIR
 # $3: IMAGE_DIR
 shell() {
-    WORK_DIR=$1
-    CHROOT_DIR=$2
-    IMAGE_DIR=$3
-    echo "=== Interactive shell inside Chroot ($CHROOT_DIR) ==="
+    local WORK_DIR=$1
+    local CHROOT_DIR=$2
+    local IMAGE_DIR=$3
+    echo "* entering interactive shell inside Chroot ($CHROOT_DIR) ==="
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
 
-    if ! chroot_mounts_ready $CHROOT_DIR; then
-        mount_for_chroot $CHROOT_DIR
+    if ! chroot_mounts_ready "$CHROOT_DIR"; then
+        mount_for_chroot "$CHROOT_DIR" "$WORK_DIR" "$IMAGE_DIR"
     else
         echo "Chroot mounts already exist."
     fi
@@ -368,7 +375,7 @@ shell() {
 # function to unmount chroot mounts
 # $1: CHROOT_DIR
 unmount_chroot_mounts() {
-    CHROOT_DIR=$1
+    local CHROOT_DIR=$1
     for mountpoint in "$CHROOT_DIR/sys" "$CHROOT_DIR/proc" "$CHROOT_DIR/dev/pts" "$CHROOT_DIR/dev"; do
         if mountpoint -q "$mountpoint"; then
             sudo umount "$mountpoint" 2>/dev/null || sudo umount -l "$mountpoint"
@@ -386,10 +393,10 @@ unmount_chroot_mounts() {
 # $3: ISO_SRC
 # $4: IMAGE_DIR
 linuxfs() {
-    WORK_DIR=$1
-    MNT_DIR=$2
-    ISO_SRC=$3
-    IMAGE_DIR=$4
+    local WORK_DIR=$1
+    local MNT_DIR=$2
+    local ISO_SRC=$3
+    local IMAGE_DIR=$4
 
     echo "* mount $ISO_SRC in $MNT_DIR and extract files ==="
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
@@ -405,12 +412,18 @@ linuxfs() {
 # $1: IMAGE_DIR
 # $2: CHROOT_DIR
 new_mx_squashfs() {
-    IMAGE_DIR=$1
-    CHROOT_DIR=$2
+    local IMAGE_DIR=$1
+    local CHROOT_DIR=$2
     echo "* clean up chroot and create new SquashFS ${IMAGE_DIR}/antiX/linuxfs ===" 
     unmount_chroot_mounts $CHROOT_DIR
     mkdir -p "$IMAGE_DIR/antiX"
     sudo rm -f "$IMAGE_DIR/antiX/linuxfs"
+
+    if [ ! -d "$CHROOT_DIR" ]; then
+        error "Chroot directory does not exist: $CHROOT_DIR"
+        exit 1
+    fi
+
     sudo mksquashfs "$CHROOT_DIR" "$IMAGE_DIR/antiX/linuxfs" -comp xz
     (cd "$IMAGE_DIR/antiX" && md5sum linuxfs > linuxfs.md5)
 }
@@ -418,18 +431,39 @@ new_mx_squashfs() {
 # Function to create final hybrid-bootable MX-ISO
 # WORK_DIR: $1
 # IMAGE_DIR: $2
+# ISO_OUTPUT: $3
 create_final_iso() {
-    WORK_DIR=$1
-    IMAGE_DIR=$2
+    local WORK_DIR=$1
+    local IMAGE_DIR=$2
+    local ISO_OUTPUT=$3
     echo "* create final hybrid-bootable ==="
+
+    if [ ! -d "$IMAGE_DIR/boot" ] || [ ! -f "$IMAGE_DIR/boot/isolinux/isolinux.bin" ]; then
+        error "Boot files are missing in $IMAGE_DIR. Run linuxfs/customize/new_mx_squashfs before creating the ISO."
+        exit 1
+    fi
+
+    local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
+    if [ ! -f "$isohdpfx" ]; then
+        isohdpfx="/usr/lib/syslinux/modules/bios/isohdpfx.bin"
+    fi
+
+    if [ ! -f "$isohdpfx" ]; then
+        error "isohdpfx.bin not found. Install syslinux/isolinux first."
+        exit 1
+    fi
+
     xorriso -as mkisofs -r -V "Custom_MX" \
-        -o "$WORK_DIR/custom-mx-linux.iso" \
+        -o "$ISO_OUTPUT" \
         -J -joliet-long -b boot/isolinux/isolinux.bin \
         -c boot/isolinux/boot.cat -no-emul-boot \
         -boot-load-size 4 -boot-info-table \
         -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
+        -isohybrid-mbr "$isohdpfx" \
+        -isohybrid-gpt-basdat \
         "$IMAGE_DIR"
-    success "DONE! Your MX image is located at: $WORK_DIR/custom-mx-linux.iso ==="
+
+    success "DONE! Your MX image is located at: $ISO_OUTPUT ==="
 }
 
 ##############################################################################
