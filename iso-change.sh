@@ -4,6 +4,11 @@
 # Exit on any error and propagate ERR traps into functions
 set -eE
 
+# Source common functions
+# shellcheck source=common.sh
+# shellcheck disable=SC1091
+source common.sh
+
 # main function to handle command line arguments and execute the appropriate steps
 main() {
     # Default values
@@ -15,6 +20,7 @@ main() {
     CHROOT_DIR="$WORK_DIR/chroot"
     IMAGE_DIR="$WORK_DIR/image"
     ISO_OUTPUT="./custom-linux.iso"
+    CUSTOMIZE_SCRIPT="./customize_tor_browser.sh"
 
     POSITIONAL=()
 
@@ -33,17 +39,21 @@ main() {
                 ISO_OUTPUT="$2"
                 shift 2
                 ;;
+            --customize-script)
+                CUSTOMIZE_SCRIPT="$2"
+                shift 2
+                ;;
             --help|-h)
-                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR $ISO_OUTPUT
+                usage "$ISO_SRC" "$WORK_DIR" "$TARGET_DRIVE" "$MNT_DIR" "$CHROOT_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 exit 0
                 ;;                
-            clean|system_check|system_prepare|prepare|extract|customize|shell|make_iso|all)
+            clean|system_check|prepare|extract|customize|shell|make_iso|create_final_iso|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
             *)
                 error "Unknown parameter: $1"
-                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR $ISO_OUTPUT
+                usage "$ISO_SRC" "$WORK_DIR" "$TARGET_DRIVE" "$MNT_DIR" "$CHROOT_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 exit 1
                 ;;
         esac
@@ -68,9 +78,6 @@ main() {
             system_check)
                 system_check
                 ;;
-            system_prepare)
-                system_prepare
-                ;;
             prepare)
                 prepare "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
@@ -78,25 +85,28 @@ main() {
                 linuxfs "$WORK_DIR" "$MNT_DIR" "$ISO_SRC" "$IMAGE_DIR"
                 ;;
             customize)
-                customize "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+                customize "$CUSTOMIZE_SCRIPT" "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
             shell)
                 shell "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
             make_iso)
                 new_mx_squashfs "$IMAGE_DIR" "$CHROOT_DIR"
-                create_final_iso "$WORK_DIR" "$IMAGE_DIR"
+                create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 ;;
+            create_final_iso)
+                create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
+                ;;    
             all)
                 prepare "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 linuxfs "$WORK_DIR" "$MNT_DIR" "$ISO_SRC" "$IMAGE_DIR"
-                customize "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+                customize "$CUSTOMIZE_SCRIPT" "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 new_mx_squashfs "$IMAGE_DIR" "$CHROOT_DIR"
-                create_final_iso "$WORK_DIR" "$IMAGE_DIR"
+                create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 ;;
             *)
                 echo "Unknown step: $STEP"
-                usage $ISO_SRC $WORK_DIR $TARGET_DRIVE $MNT_DIR $CHROOT_DIR $IMAGE_DIR $ISO_OUTPUT
+                usage "$ISO_SRC" "$WORK_DIR" "$TARGET_DRIVE" "$MNT_DIR" "$CHROOT_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 exit 1
                 ;;
         esac
@@ -105,26 +115,6 @@ main() {
 
 # Helper Functions
 ##############################################################################
-
-# function to print warning messages in yellow
-warning() {
-    printf '\033[33mWARNING: %s\033[0m\n' "$*" >&2
-}
-
-error() {
-    printf '\n\033[31mERROR: %s\033[0m\n\n' "$*" >&2
-}
-
-success() {
-    printf '\033[32mSUCCESS: %s\033[0m\n' "$*" >&2
-}
-
-# Exit on any error and propagate ERR traps into functions
-error_handler() {
-    local exit_code=$?
-    printf '\033[31mERROR: command failed with exit code %d: %s\033[0m\n' \
-        "$exit_code" "$BASH_COMMAND" >&2
-}
 
 # function to display usage information
 # $1: ISO_SRC
@@ -170,7 +160,6 @@ EOF2
 # System functions
 ##############################################################################
 
-# System check function to ensure required commands are available
 system_check() {
     echo "=== System check ==="
 
@@ -202,24 +191,6 @@ system_check() {
     success "All required commands are available."
 }
 
-# System preparation function to install required packages
-system_prepare() {
-    echo "=== System preparation ==="
-    if [ "$EUID" -ne 0 ]; then
-        error "Please run the script with sudo!"
-        exit 1
-    fi
-
-    sudo apt-get update
-    sudo apt-get install -y squashfs-tools xorriso rsync
-    
-    if $@; then
-        success "Required packages installed."
-    else
-        error "Failed to install required packages."
-        exit 1
-    fi
-}
 
 # Function for working with work directories
 ###############################################################################
@@ -263,33 +234,6 @@ prepare() {
     system_prepare
 }
 
-# function to customize the chroot environment
-# $1: WORK_DIR
-# $2: CHROOT_DIR
-# $3: IMAGE_DIR
-customize() {
-    local WORK_DIR=$1
-    local CHROOT_DIR=$2
-    local IMAGE_DIR=$3
-    echo "=== Customize MX-Chroot ==="
-    ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
-
-    if ! chroot_mounts_ready "$CHROOT_DIR"; then
-        mount_for_chroot "$CHROOT_DIR" "$WORK_DIR" "$IMAGE_DIR"
-    else
-        echo "Chroot mounts already exist."
-    fi
-
-    sudo chroot "$CHROOT_DIR" /bin/bash -e <<EOF2
-       export DEBIAN_FRONTEND=noninteractive
-       apt update
-       apt upgrade -y
-       apt-get install -y exfat-fuse exfatprogs ntfs-3g dmsetup xdotool cryptsetup 
-       apt-get install -y torbrowser-launcher 
-       apt-get clean
-       rm -rf /var/lib/apt/lists/*
-EOF2
-}
 
 # function to clean up work directory
 # $1: WORK_DIR
@@ -298,12 +242,12 @@ clean() {
     echo "clean $WORK_DIR"
     if [ -d "$WORK_DIR" ]; then
         warning "Work directory $WORK_DIR already exists. It will be deleted."
-        read -p "Do you want to continue? (y/n): " choice
+        read -pr "Do you want to continue? (y/n): " choice
         if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
             echo "Cancelled."
             exit 1
         fi
-        cleanup_workdir $WORK_DIR
+        cleanup_workdir "$WORK_DIR"
         sudo rm -rf "$WORK_DIR"
     fi
 }
@@ -372,6 +316,28 @@ shell() {
     sudo chroot "$CHROOT_DIR" /bin/bash
 }
 
+# function to customize the chroot environment
+customize() {
+    local CUSTOMIZE_SCRIPT=$1
+    local WORK_DIR=$2
+    local CHROOT_DIR=$3
+    local IMAGE_DIR=$4
+    header "customize chroot"
+    # shellcheck source=customize_tor_browser.sh
+    # shellcheck disable=SC1091
+    source "$CUSTOMIZE_SCRIPT" 
+
+    ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+
+    if ! chroot_mounts_ready "$CHROOT_DIR"; then
+        mount_for_chroot "$CHROOT_DIR" "$WORK_DIR" "$IMAGE_DIR"
+    else
+        echo "Chroot mounts already exist."
+    fi
+
+    customize_exe "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+}
+
 # function to unmount chroot mounts
 # $1: CHROOT_DIR
 unmount_chroot_mounts() {
@@ -415,7 +381,7 @@ new_mx_squashfs() {
     local IMAGE_DIR=$1
     local CHROOT_DIR=$2
     echo "* clean up chroot and create new SquashFS ${IMAGE_DIR}/antiX/linuxfs ===" 
-    unmount_chroot_mounts $CHROOT_DIR
+    unmount_chroot_mounts "$CHROOT_DIR"
     mkdir -p "$IMAGE_DIR/antiX"
     sudo rm -f "$IMAGE_DIR/antiX/linuxfs"
 

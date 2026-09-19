@@ -14,23 +14,9 @@ main() {
     # Trap to ensure cleanup on exit
     trap error_handler ERR
 
-    # === CONFIGURATION ===
-    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-        USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    else
-        USER_HOME="$HOME"
-
-    fi
-
-    local loISO_PATH="$USER_HOME/mx-work/custom-mx-linux.iso"
     local LINUX_SIZE_GB=4 # Größe der Linux-Partition in Gigabyte (Rest wird Datenpartition)
     local CRYPTED_PARTITION_SIZE_GB=1 # Größe der verschlüsselten Partition in Gigabyte (0 = Rest des Sticks)
-    local TARGET_DRIVE_CONFIRMED=false
-    local LINUX_PARTITION_CREATED=false
-    local DEPLOY_ISO_DONE=false
-    local DELETE_EXISTING_PARTITION_TABLE=false
-    local DATA_PARTITION_CREATED=false
-    local CRYPTED_PARTITION_CREATED=false
+    local NONE_ENCRYPTED_SIZE_GB=1 # Größe der unverschlüsselten Partition in Gigabyte (0 = keine unverschlüsselte Partition)
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -42,9 +28,9 @@ main() {
                 local ISO_PATH="$2"
                 shift 2
                 ;;
-            --target-drive)
+            --usb-drive)
                 if [[ $# -lt 2 ]]; then
-                    echo "[!] Missing value for --target-drive." >&2
+                    echo "[!] Missing value for --usb-drive." >&2
                     exit 1
                 fi
                 local TARGET_DRIVE="$2"
@@ -66,12 +52,29 @@ main() {
                 local CRYPTED_PARTITION_SIZE_GB="$2"
                 shift 2
                 ;;
+            --none-encrypted-size)
+                if [[ $# -lt 2 ]]; then
+                    echo "[!] Missing value for --none-encrypted-size." >&2
+                    exit 1
+                fi
+                local NONE_ENCRYPTED_SIZE_GB="$2"
+                shift 2
+                ;;
+            --sizes)
+                if [[ $# -lt 2 ]]; then
+                    echo "[!] Missing value for --sizes." >&2
+                    exit 1
+                fi
+                
+                IFS=',' read -r LINUX_SIZE_GB CRYPTED_PARTITION_SIZE_GB NONE_ENCRYPTED_SIZE_GB <<< "$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 exit 0
                 ;;
 
-                system_check|list_sticks|delete_partitions|update_linux_partition)
+                system_check|list_sticks|parted|format|update_linux|encrypt|format_data|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -106,16 +109,34 @@ main() {
             list_sticks 
             exit 0
             ;;
-        delete_partitions)
-            delete_existing_partition_table "$TARGET_DRIVE"
+        parted)
+            parted "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+            exit 0
             ;;
-        update_linux_partition)
+        format)
+            format "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+            exit 0
+            ;;
+        update_linux)
             if [[ -z "${TARGET_DRIVE:-}" || -z "${ISO_PATH:-}" ]]; then
-                echo "[!] update_linux_partition requires --target-drive and --iso." >&2
+                echo "[!] update_linux requires --usb-drive and --iso." >&2
                 usage >&2
                 exit 1
             fi
             update_linux_partition "$TARGET_DRIVE" "$ISO_PATH"
+            exit 0
+            ;;
+        encrypt)
+            if [[ -z "${TARGET_DRIVE:-}" ]]; then
+                echo "[!] encrypted_partition requires --usb-drive" >&2
+                usage >&2
+                exit 1
+            fi
+            encrypt "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
+            exit 0
+            ;;
+        format_data)
+            format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             ;;
         all)
             if [[ -z "${TARGET_DRIVE:-}" ]]; then
@@ -157,40 +178,48 @@ all() {
     echo "Starting deployment to $TARGET_DRIVE"
     echo "Linux Partition Size: ${LINUX_SIZE_GB} GB"
     
-    if [ -n "$CRYPTED_PARTITION_SIZE_GB" ]; then
+    if [ -n "$CRYPTED_PARTITION_SIZE_GB" ] || [ -n "$NONE_ENCRYPTED_SIZE_GB" ]; then
         if (( "$CRYPTED_PARTITION_SIZE_GB" > 0 )); then
             echo "Encrypted Data Partition Size: ${CRYPTED_PARTITION_SIZE_GB} GB"
         else
             echo "No Encrypted Data Partition will be created."
         fi
-    else
-        echo "Encrypted Data Partition Size: Remaining space"
     fi
     echo "--------------------------------------------------------"
 
 
     delete_existing_partition_table "$TARGET_DRIVE" 
-    create_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
-    local DEPLOY_ISO_DONE=$(deploy_iso_to_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH")
-    local CRYPTED_PARTITION_CREATED=false
+    format "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+    update_linux_partition "$TARGET_DRIVE" "$ISO_PATH"
     if (( CRYPTED_PARTITION_SIZE_GB > 0 )); then
-        CRYPTED_PARTITION_CREATED=$(create_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB")
+        encrypt "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
+    fi
+    if (( NONE_ENCRYPTED_SIZE_GB > 0 )); then
+        format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+    fi
+}
+
+# Function to format the target drive and create partitions
+# $1: Target drive (e.g., /dev/sdb)
+# $2: LINUX_SIZE_GB (size of the Linux partition in GB)
+# $3: CRYPTED_PARTITION_SIZE_GB (size of the encrypted partition in GB)
+# $4: NONE_ENCRYPTED_SIZE_GB (size of the unencrypted partition in GB)
+format() {
+    local TARGET_DRIVE="$1"
+    local LINUX_SIZE_GB="$2"
+    local CRYPTED_PARTITION_SIZE_GB="$3"
+    local NONE_ENCRYPTED_SIZE_GB="$4"
+
+    if [[ -z "${TARGET_DRIVE:-}" ]]; then
+        list_sticks
+        exit 1
     fi
 
-    echo "--------------------------------------------------------"
-    echo "   SUCCESS! Your secure USB stick is ready for use."
-    echo "--------------------------------------------------------"
-    if [ "$DEPLOY_ISO_DONE" = true ]; then
-        echo "Partition 1: Custom Linux ISO deployed"
-    else
-        echo "Partition 1: Custom Linux ISO not deployed"
-    fi
-
-    if [ "$CRYPTED_PARTITION_CREATED" = true ]; then
-        echo "Partition 2: Password-Protected Data Vault (exFAT, VeraCrypt)"
-    else
-        echo "Partition 2: Password-Protected Data Vault (exFAT, VeraCrypt) not created"
-    fi
+    confirm_target_drive "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+    delete_existing_partition_table "$TARGET_DRIVE"
+    parted "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+    encrypt "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+    format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
 }
 
 # Function to handle errors and display the command that caused the error
@@ -222,7 +251,7 @@ The selected drive is completely erased.
 Options:
     --iso <path>                 Path to the custom Linux ISO
                                                              (default: $ISO_PATH)
-    --target-drive <path>        Existing USB disk for update_linux_partition
+    --usb-drive <path>           Existing USB disk for update_linux_partition
     --linux-size <gigabytes>     Size of partition 1 in GB
                                                              (default: $LINUX_SIZE_GB)
   --encrypted-size <gigabytes> Size of the VeraCrypt-encrypted data partition in GB
@@ -233,7 +262,7 @@ Options:
 Steps (default: all):
   system_check                 Check required commands
   list_sticks                  List disks and ask for a target
-  delete_partitions            Erase signatures and create a GPT
+  format                       Erase signatures and create a GPT
   update_linux_partition       Replace only partition 1; keep partition 2
 
 The script creates:
@@ -313,10 +342,12 @@ check_target_is_not_system_disk() {
 # $1: Target drive (e.g., /dev/sdb)
 # $2: LINUX_SIZE_GB (size of the Linux partition in GB)
 # $3: CRYPTED_PARTITION_SIZE_GB (size of the encrypted partition in GB)
+# $4: NONE_ENCRYPTED_SIZE_GB (size of the unencrypted partition in GB)
 confirm_target_drive() {
     local TARGET_DRIVE=$1
     local LINUX_SIZE_GB=$2
     local CRYPTED_PARTITION_SIZE_GB=$3
+    local NONE_ENCRYPTED_SIZE_GB=$4
 
     # Confirm the target drive with the user
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
@@ -342,8 +373,13 @@ confirm_target_drive() {
     else
         echo "Encrypted Data Partition: Remaining space (VeraCrypt + exFAT)"
     fi
+    if [ "$NONE_ENCRYPTED_SIZE_GB" ]; then
+        if (( NONE_ENCRYPTED_SIZE_GB > 0 )); then
+            echo "Unencrypted Data Partition: ${NONE_ENCRYPTED_SIZE_GB} GB"
+        fi
+    fi
     echo "--------------------------------------------------------"
-    read -p "Are you absolutely sure? (yes/NO): " CONFIRM
+    read -rp "Are you absolutely sure? (yes/NO): " CONFIRM
     if [ "$CONFIRM" != "yes" ]; then
         echo "Aborted."
         exit 1
@@ -356,13 +392,17 @@ confirm_target_drive() {
 delete_existing_partition_table() {
     local TARGET_DRIVE="$1"
     
+    # check for root privileges (if not, exit with error)
+    check_root
+
     # Delete existing partition table and wipe filesystem signatures
     ##############################################################################
-
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         list_sticks
         exit 1
     fi
+
+
 
     debug "* delete existing partition table and mounts ==="
     # Unmount partitions, in case of automatic mount
@@ -376,7 +416,7 @@ delete_existing_partition_table() {
     # Create new partition table and partitions
     ##############################################################################
     debug "* create new partition table (GPT) ==="
-    sudo parted -s "$TARGET_DRIVE" mklabel gpt
+    command parted -s "$TARGET_DRIVE" mklabel gpt
     debug "[*] New partition table created on $TARGET_DRIVE."
     debug "delete_existing_partition_table completed."
 }
@@ -385,57 +425,63 @@ delete_existing_partition_table() {
 # $1: Target drive (e.g., /dev/sdb)
 # $2: LINUX_SIZE_GB (size of the Linux partition in GB)
 # $3: CRYPTED_PARTITION_SIZE_GB (size of the encrypted partition in GB)
-create_partition() {
-    local TARGET_DRIVE="${1:-$TARGET_DRIVE}"
-    local LINUX_SIZE_GB="${2:-$LINUX_SIZE_GB}"
-    local CRYPTED_PARTITION_SIZE_GB="${3:-$CRYPTED_PARTITION_SIZE_GB}"
+# $4: NONE_ENCRYPTED_SIZE_GB (size of the unencrypted partition in GB)
+parted() {
+    local TARGET_DRIVE="$1"
+    local LINUX_SIZE_GB="$2"
+    local CRYPTED_PARTITION_SIZE_GB="$3"
+    local NONE_ENCRYPTED_SIZE_GB="$4"
+
+    # check for root privileges (if not, exit with error)
+    check_root
 
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         list_sticks
         exit 1
     fi
 
+    delete_existing_partition_table "$TARGET_DRIVE"
+
     debug "* create partitions on $TARGET_DRIVE"
     
     # Create linux partition
     #############################################################################
     debug "** create Linux Partition "
-    debug "*** Create partition of type "Primary" from 1MB up to wanted size"
-    sudo parted -s "$TARGET_DRIVE" mkpart primary 1MiB ${LINUX_SIZE_GB}GiB
+    debug "*** Create partition of type \"Primary\" from 1MB up to wanted size"
+    command parted -s "$TARGET_DRIVE" mkpart primary 1MiB "${LINUX_SIZE_GB}GiB"
     debug "** Mark the partition as bootable for UEFI systems"
-    sudo parted -s "$TARGET_DRIVE" set 1 esp on
+    command parted -s "$TARGET_DRIVE" set 1 esp on
 
     # Update the kernel's partition table so the new partition is visible.
-    sudo partprobe "$TARGET_DRIVE"
+    command partprobe "$TARGET_DRIVE"
     sleep 2
 
-    if [[ "$TARGET_DRIVE" == *"nvme"* ]]; then
-        PART1="${TARGET_DRIVE}p1"
-    else
-        PART1="${TARGET_DRIVE}1"
-    fi
     debug "[**] Linux partition created on $TARGET_DRIVE (1-${LINUX_SIZE_GB}GiB)."
  
-    # Create data partition 
+    # Create encrypted data partition 
     #############################################################################
-    if [ "$CRYPTED_PARTITION_SIZE_GB" -gt 0 ]; then
-        debug "** create data partition for encrypted data ==="
+    if [ "$CRYPTED_PARTITION_SIZE_GB" -gt 0 ] && [ "$NONE_ENCRYPTED_SIZE_GB" -gt 0 ]; then
+        debug "** create data partitions for encrypted data and non-encrypted data ==="
         # Create the requested size, or use all remaining space when it does not fit.
         DEVICE_SIZE_BYTES=$(blockdev --getsize64 "$TARGET_DRIVE")
         LINUX_SIZE_BYTES=$((LINUX_SIZE_GB * 1024 * 1024 * 1024))
         CRYPTED_SIZE_BYTES=$((CRYPTED_PARTITION_SIZE_GB * 1024 * 1024 * 1024))
+        NONE_ENCRYPTED_SIZE_BYTES=$((NONE_ENCRYPTED_SIZE_GB * 1024 * 1024 * 1024))
         AVAILABLE_SIZE_BYTES=$((DEVICE_SIZE_BYTES - LINUX_SIZE_BYTES))
 
-        if (( CRYPTED_PARTITION_SIZE_GB == 0 || CRYPTED_SIZE_BYTES > AVAILABLE_SIZE_BYTES )); then
-            debug "[*] Requested encrypted partition does not fit; using the remaining space."
-            sudo parted -s "$TARGET_DRIVE" mkpart primary "${LINUX_SIZE_GB}GiB" 100%
+        if (( CRYPTED_PARTITION_SIZE_GB == 0 || (CRYPTED_SIZE_BYTES + NONE_ENCRYPTED_SIZE_BYTES) > AVAILABLE_SIZE_BYTES )); then
+            debug "[**] Requested data partition does not fit; using the remaining space."
+            command parted -s "$TARGET_DRIVE" mkpart primary "${LINUX_SIZE_GB}GiB" 100%
         else
             CRYPTED_PARTITION_END_GB=$((LINUX_SIZE_GB + CRYPTED_PARTITION_SIZE_GB))
-            sudo parted -s "$TARGET_DRIVE" mkpart primary "${LINUX_SIZE_GB}GiB" "${CRYPTED_PARTITION_END_GB}GiB"
+            NONE_ENCRYPTED_PARTITION_END_GB=$((CRYPTED_PARTITION_END_GB + NONE_ENCRYPTED_SIZE_GB))
+            debug "[**] Creating encrypted partition from ${LINUX_SIZE_GB}GiB to ${CRYPTED_PARTITION_END_GB}GiB and unencrypted partition from ${CRYPTED_PARTITION_END_GB}GiB to ${NONE_ENCRYPTED_PARTITION_END_GB}GiB"
+            command parted -s "$TARGET_DRIVE" mkpart primary "${LINUX_SIZE_GB}GiB" "${CRYPTED_PARTITION_END_GB}GiB"
+            command parted -s "$TARGET_DRIVE" mkpart primary "${CRYPTED_PARTITION_END_GB}GiB" "${NONE_ENCRYPTED_PARTITION_END_GB}GiB"
         fi
 
         # Update the kernel's partition table
-        sudo partprobe "$TARGET_DRIVE"
+        command partprobe "$TARGET_DRIVE"
         sleep 2
 
         # Definition of partition paths (e.g., /dev/sdb1 or /dev/nvme0n1p1)
@@ -449,53 +495,6 @@ create_partition() {
         PART2=""
     fi
     debug "[*] create_partition completed."
-}
-
-# Function to deploy the custom Linux ISO to the first partition of the target drive
-# $1: Target drive (e.g., /dev/sdb)
-# $2: LINUX_SIZE_GB (size of the Linux partition in GB)
-# $3: ISO_PATH (path to the custom Linux ISO)
-deploy_iso_to_partition() {
-    local TARGET_DRIVE="$1"
-    local LINUX_SIZE_GB="$2"
-    local ISO_PATH="$3"
-
-    debug "* Deploying custom Linux ISO to Partition 1 "
-    if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
-        list_sticks
-    fi
-
-    local LINUX_PARTITION=$(lsblk -nrpo NAME,TYPE "$TARGET_DRIVE" |
-    awk '$2 == "part" { print $1; exit }')
-
-    if [[ -z "$LINUX_PARTITION" || ! -b "$LINUX_PARTITION" ]]; then
-        error "[!] No first partition found on $TARGET_DRIVE." >&2
-        exit 1
-    fi
-
-
-    if [ ! -f "$ISO_PATH" ]; then
-        error "[!] ISO file not found: $ISO_PATH"
-        exit 1
-    fi
-
-    debug "** Checking if the ISO fits in the first partition..."
-    local ISO_SIZE_BYTES=$(stat -c '%s' "$ISO_PATH")
-    local LINUX_PARTITION_SIZE_BYTES=$(blockdev --getsize64 "$LINUX_PARTITION")
-    if (( ISO_SIZE_BYTES > LINUX_PARTITION_SIZE_BYTES )); then
-        error "[!] ISO does not fit in partition 1." >&2
-        exit 1
-    fi
-
-    # Copy the custom Linux ISO to the first partition
-    ##############################################################################
-
-    debug "** Flashing Linux ISO to Partition 1 "
-    debug "*** Writing ISO image to $LINUX_PARTITION... Please wait."
-    pv "$ISO_PATH" | sudo dd of="$LINUX_PARTITION" bs=8M
-    debug "[***] Data written. Waiting for the USB device to finish flushing..."
-    debug "[***] ISO image written to $LINUX_PARTITION."
-    return 0
 }
 
 # Function to update the Linux partition with a new ISO while keeping the second partition intact
@@ -557,7 +556,7 @@ update_linux_partition() {
     fi
 
     debug "[*] Writing ISO image to $linux_partition... Please wait."
-    pv "$ISO_PATH" | sudo dd of="$linux_partition" bs=8M conv=fsync status=progress
+    pv "$ISO_PATH" | sudo dd of="$linux_partition" bs=8M conv=fsync 
     sudo partprobe "$TARGET_DRIVE" 2>/dev/null || true
     debug "[*] Updated $linux_partition. Partition 2 was not modified."
 }
@@ -565,35 +564,37 @@ update_linux_partition() {
 # Function to create an encrypted data partition using VeraCrypt
 # $1: Target drive (e.g., /dev/sdb)
 # $2: LINUX_SIZE_GB (size of the Linux partition in GB)
-# $3: CRYPTED_PARTITION_SIZE_GB (size of the encrypted partition in GB)
-create_encrypted_partition() {
+encrypt() {
     local TARGET_DRIVE="$1"
     local LINUX_SIZE_GB="$2"
-    local CRYPTED_PARTITION_SIZE_GB="$3"
 
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         list_sticks
+        exit 1
     fi
 
-    if [ -z "${CRYPTED_PARTITION_SIZE_GB:-}" ] || (( CRYPTED_PARTITION_SIZE_GB <= 0 )); then
-        debug "[*] No encrypted partition requested; skipping VeraCrypt setup."
-        return 1
+    # Check existence of the second partition
+    if [[ "$TARGET_DRIVE" == *"nvme"* ]]; then
+        PART2="${TARGET_DRIVE}p2"
+    else
+        PART2="${TARGET_DRIVE}2"
     fi
 
-    if [[ "$TARGET_DRIVE_CONFIRMED" == false ]]; then
-        confirm_target_drive "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
-    fi
-
-    if [ "$DELETE_EXISTING_PARTITION_TABLE" = false ]; then
-        delete_existing_partition_table "$TARGET_DRIVE" "$TARGET_DRIVE_CONFIRMED" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
-    fi
-
-    if [ "$DATA_PARTITION_CREATED" = false ]; then
-        create_data_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
-    fi
-
+    # Check if the second partition exists
     if [ ! -b "$PART2" ]; then
-        error "[!] Data partition was not created: $PART2" >&2
+        error "[!] Second partition not found: $PART2" >&2
+        exit 1
+    fi
+
+    # Check size of the second partition
+    local partition_size_bytes
+    partition_size_bytes=$(blockdev --getsize64 "$PART2")
+    
+    # Confirm the encryption of the second partition with the user
+    warning "$PART2 will be formatted and encrypted with VeraCrypt. All data on this partition will be lost!"
+    read -r -p "Do you want to continue? (yes/NO): " confirmation
+    if [ "$confirmation" != yes ]; then
+        error "Aborted."
         exit 1
     fi
 
@@ -621,6 +622,40 @@ create_encrypted_partition() {
     debug "[*] Encrypted data partition created on $PART2."
 
     return 0
+}
+
+# Function to format the third partition as exFAT for unencrypted data storage
+# $1: Target drive (e.g., /dev/sdb)
+format_none_encrypted_partition() {
+    local TARGET_DRIVE="$1"
+    
+    if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
+        list_sticks
+        exit 1
+    fi
+
+    # Check existence of the third partition
+    if [[ "$TARGET_DRIVE" == *"nvme"* ]]; then
+        PART3="${TARGET_DRIVE}p3"
+    else
+        PART3="${TARGET_DRIVE}3"
+    fi
+
+    # Check if the third partition exists
+    if [ ! -b "$PART3" ]; then
+        error "[!] Third partition not found: $PART3" >&2
+        exit 1
+    fi
+
+    read -r -p "Do you want to format the third partition $PART3 as exFAT for unencrypted data storage? (yes/NO): " confirmation
+    if [ "$confirmation" != yes ]; then
+        error "Aborted."
+        exit 1
+    fi
+    # Format the third partition as exFAT for unencrypted data storage
+    debug "Formatting unencrypted data partition $PART3 as exFAT..."
+    sudo mkfs.exfat -n "DATA" "$PART3"
+    debug "[*] Unencrypted data partition formatted on $PART3."
 }
 
 # list available drives and prompt user for target USB stick
