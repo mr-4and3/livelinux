@@ -78,7 +78,35 @@ sudo ./iso-change.sh \
 Deploy the ISO to a USB drive:
 
 ```bash
-sudo ./deploy-to-usb.sh
+sudo ./deploy-to-usb.sh \
+  --usb-drive /dev/sdX \
+  --iso /path/to/custom-linux.iso \
+  --sizes 4,1,1 \
+  all
+```
+
+The `--sizes` option takes a comma-separated list in the format:
+
+```bash
+--sizes linux_size,encrypted_size,none_encrypted_size
+```
+
+Example:
+
+```bash
+sudo ./deploy-to-usb.sh --usb-drive /dev/sdX --iso /path/to/custom-linux.iso --sizes 4,1,1 all
+```
+
+You can also set the partitions individually:
+
+```bash
+sudo ./deploy-to-usb.sh \
+  --usb-drive /dev/sdX \
+  --iso /path/to/custom-linux.iso \
+  --linux-size 4 \
+  --encrypted-size 1 \
+  --none-encrypted-size 1 \
+  all
 ```
 
 ## Build workflow
@@ -109,10 +137,23 @@ The script uses these folders under the working directory:
 
 ## USB layout
 
-The USB deployment script creates a hybrid USB with two main partitions:
+The USB deployment script creates a hybrid USB with up to three main partitions:
 
 1. Partition 1: bootable Linux ISO image
 2. Partition 2: VeraCrypt-encrypted exFAT data partition
+3. Partition 3: optional unencrypted exFAT data partition
+
+The sizes are configured either with a single comma-separated value:
+
+```bash
+--sizes 4,1,1
+```
+
+or with the individual options:
+
+```bash
+--linux-size 4 --encrypted-size 1 --none-encrypted-size 1
+```
 
 ## Important warning
 

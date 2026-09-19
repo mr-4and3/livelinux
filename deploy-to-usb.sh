@@ -249,15 +249,22 @@ Deploys a custom Linux ISO to a USB drive.
 The selected drive is completely erased.
 
 Options:
-    --iso <path>                 Path to the custom Linux ISO
-                                                             (default: $ISO_PATH)
-    --usb-drive <path>           Existing USB disk for update_linux_partition
-    --linux-size <gigabytes>     Size of partition 1 in GB
-                                                             (default: $LINUX_SIZE_GB)
-  --encrypted-size <gigabytes> Size of the VeraCrypt-encrypted data partition in GB
-                               (default: $CRYPTED_PARTITION_SIZE_GB;
-                                0 = remaining space)
-  -h, --help                   Show this help and exit
+    --iso <path>                    Path to the custom Linux ISO
+                                                          (default: $ISO_PATH)
+    --target-drive <path>           Existing USB disk for update_linux_partition
+    --linux-size <gigabytes>        Size of partition 1 in GB
+                                                          (default: $LINUX_SIZE_GB)
+    --encrypted-size <gigabytes>    Size of the VeraCrypt-encrypted data partition in GB
+                                                          (default: $CRYPTED_PARTITION_SIZE_GB;
+                                                           0 = remaining space)
+    --none-encrypted-size <gigabytes>
+                                   Size of the unencrypted data partition in GB
+                                                          (default: $NONE_ENCRYPTED_SIZE_GB;
+                                                           0 = no unencrypted partition)
+    --sizes <linux,encrypted,none>  Comma-separated sizes in GB for all partitions.
+                                                          Example: --sizes 15,20,5
+                                                          Overrides the individual size flags above.
+    -h, --help                     Show this help and exit
 
 Steps (default: all):
   system_check                 Check required commands
@@ -268,12 +275,14 @@ Steps (default: all):
 The script creates:
   Partition 1                  Custom Linux ISO image
   Partition 2                  VeraCrypt-encrypted exFAT data partition
+  Partition 3                  Optional unencrypted exFAT data partition
 
 The deployment step requires a USB-compatible ISO layout. The generated ISO
 must be tested on the target hardware before relying on it for booting.
 
-Example:
+Examples:
   sudo $0 --iso /path/to/custom-linux.iso --linux-size 15 --encrypted-size 20
+  sudo $0 --iso /path/to/custom-linux.iso --sizes 15,20,5
 EOF
 }
 
