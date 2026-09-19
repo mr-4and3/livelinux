@@ -251,7 +251,7 @@ The selected drive is completely erased.
 Options:
     --iso <path>                    Path to the custom Linux ISO
                                                           (default: $ISO_PATH)
-    --target-drive <path>           Existing USB disk for update_linux_partition
+    --usb-drive <path>           Existing USB disk for update_linux_partition
     --linux-size <gigabytes>        Size of partition 1 in GB
                                                           (default: $LINUX_SIZE_GB)
     --encrypted-size <gigabytes>    Size of the VeraCrypt-encrypted data partition in GB
@@ -266,11 +266,15 @@ Options:
                                                           Overrides the individual size flags above.
     -h, --help                     Show this help and exit
 
-Steps (default: all):
+Commands (default: all):
   system_check                 Check required commands
   list_sticks                  List disks and ask for a target
+  parted                       part the usb stick
   format                       Erase signatures and create a GPT
-  update_linux_partition       Replace only partition 1; keep partition 2
+  update_linux                 Replace only partition 1; keep partition 2
+  encrypt                      encrypt partion 2
+  format_data                  format data partion
+  all                          do all for one usb-stick
 
 The script creates:
   Partition 1                  Custom Linux ISO image

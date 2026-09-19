@@ -27,7 +27,7 @@ main() {
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --stick_device)
+            --usb-device)
                 TARGET_DRIVE="$2"
                 shift 2
                 ;;
