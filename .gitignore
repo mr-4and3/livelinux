@@ -3,3 +3,4 @@ chroot/*
 image/*
 work/*
 *.iso
+test_mnt/*
