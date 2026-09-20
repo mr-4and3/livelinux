@@ -4,6 +4,8 @@
 # Set script to exit immediately if any command fails
 set -eE
 
+source common.sh
+
 main() {
     # Main function to execute the script
     # This function is called at the end of the script
@@ -251,7 +253,7 @@ The selected drive is completely erased.
 Options:
     --iso <path>                    Path to the custom Linux ISO
                                                           (default: $ISO_PATH)
-    --usb-drive <path>           Existing USB disk for update_linux_partition
+    --usb-drive <path>              Existing USB disk for update_linux
     --linux-size <gigabytes>        Size of partition 1 in GB
                                                           (default: $LINUX_SIZE_GB)
     --encrypted-size <gigabytes>    Size of the VeraCrypt-encrypted data partition in GB
@@ -434,11 +436,26 @@ delete_existing_partition_table() {
     debug "delete_existing_partition_table completed."
 }
 
-# Function to create the data partition for encrypted data on the target drive
-# $1: Target drive (e.g., /dev/sdb)
-# $2: LINUX_SIZE_GB (size of the Linux partition in GB)
-# $3: CRYPTED_PARTITION_SIZE_GB (size of the encrypted partition in GB)
-# $4: NONE_ENCRYPTED_SIZE_GB (size of the unencrypted partition in GB)
+#-------------------------------------------------------------------------------
+# Function: parted
+# Description: Creates a highly compatible MBR (MS-DOS) partition table on the 
+#              target drive. Configures a hybrid bootable FAT32 partition for 
+#              both modern UEFI and legacy BIOS systems (like ThinkPad X220/P51), 
+#              followed by optional encrypted/unencrypted data partitions.
+#
+# Arguments:
+#   $1 - TARGET_DRIVE (e.g., /dev/sdb)
+#   $2 - LINUX_SIZE_GB (Size for the OS/boot partition)
+#   $3 - CRYPTED_PARTITION_SIZE_GB (Size for the encrypted data partition)
+#   $4 - NONE_ENCRYPTED_SIZE_GB (Size for the plain data partition)
+#
+# Notes:
+#   - Uses 'mklabel msdos' (MBR) instead of GPT because older UEFI firmwares 
+#     often fail to boot GPT layout from USB removable media.
+#   - Sets 'boot on' (Active Flag) required by older BIOS/UEFI implementations.
+#   - Ensure the first partition is later formatted as FAT32 to remain writable
+#     and recognized by UEFI bootloaders.
+#-------------------------------------------------------------------------------
 parted() {
     local TARGET_DRIVE="$1"
     local LINUX_SIZE_GB="$2"
@@ -453,7 +470,10 @@ parted() {
         exit 1
     fi
 
+    # 1. ZUERST: Bestehende Tabelle löschen und zwingend MBR (msdos) erstellen
     delete_existing_partition_table "$TARGET_DRIVE"
+    debug "* Erstelle MBR (msdos) Partitionstabelle auf $TARGET_DRIVE"
+    command parted -s "$TARGET_DRIVE" mklabel msdos
 
     debug "* create partitions on $TARGET_DRIVE"
     
@@ -461,9 +481,11 @@ parted() {
     #############################################################################
     debug "** create Linux Partition "
     debug "*** Create partition of type \"Primary\" from 1MB up to wanted size"
-    command parted -s "$TARGET_DRIVE" mkpart primary 1MiB "${LINUX_SIZE_GB}GiB"
-    debug "** Mark the partition as bootable for UEFI systems"
-    command parted -s "$TARGET_DRIVE" set 1 esp on
+    command parted -s "$TARGET_DRIVE" mkpart primary fat32 1MiB "${LINUX_SIZE_GB}GiB"
+    
+    # 2. ÄNDERUNG: Für MBR nutzt man "boot", nicht "esp"
+    debug "** Mark the partition as bootable (Active Flag für BIOS/UEFI MBR-Boot)"
+    command parted -s "$TARGET_DRIVE" set 1 boot on
 
     # Update the kernel's partition table so the new partition is visible.
     command partprobe "$TARGET_DRIVE"
@@ -475,7 +497,7 @@ parted() {
     #############################################################################
     if [ "$CRYPTED_PARTITION_SIZE_GB" -gt 0 ] && [ "$NONE_ENCRYPTED_SIZE_GB" -gt 0 ]; then
         debug "** create data partitions for encrypted data and non-encrypted data ==="
-        # Create the requested size, or use all remaining space when it does not fit.
+        
         DEVICE_SIZE_BYTES=$(blockdev --getsize64 "$TARGET_DRIVE")
         LINUX_SIZE_BYTES=$((LINUX_SIZE_GB * 1024 * 1024 * 1024))
         CRYPTED_SIZE_BYTES=$((CRYPTED_PARTITION_SIZE_GB * 1024 * 1024 * 1024))
@@ -489,6 +511,8 @@ parted() {
             CRYPTED_PARTITION_END_GB=$((LINUX_SIZE_GB + CRYPTED_PARTITION_SIZE_GB))
             NONE_ENCRYPTED_PARTITION_END_GB=$((CRYPTED_PARTITION_END_GB + NONE_ENCRYPTED_SIZE_GB))
             debug "[**] Creating encrypted partition from ${LINUX_SIZE_GB}GiB to ${CRYPTED_PARTITION_END_GB}GiB and unencrypted partition from ${CRYPTED_PARTITION_END_GB}GiB to ${NONE_ENCRYPTED_PARTITION_END_GB}GiB"
+            
+            # WICHTIG: Typ "primary" bleibt, da MBR bis zu 4 primäre Partitionen erlaubt.
             command parted -s "$TARGET_DRIVE" mkpart primary "${LINUX_SIZE_GB}GiB" "${CRYPTED_PARTITION_END_GB}GiB"
             command parted -s "$TARGET_DRIVE" mkpart primary "${CRYPTED_PARTITION_END_GB}GiB" "${NONE_ENCRYPTED_PARTITION_END_GB}GiB"
         fi
@@ -510,14 +534,30 @@ parted() {
     debug "[*] create_partition completed."
 }
 
-# Function to update the Linux partition with a new ISO while keeping the second partition intact
-# $1: Target drive (e.g., /dev/sdb)
-# $2: ISO_PATH (path to the new custom Linux ISO)
-# 
+#-------------------------------------------------------------------------------
+# Function: update_linux_partition
+# Description: Formats the first partition as FAT32 and extracts the contents
+#              of the provided Linux ISO onto it. This approach guarantees that 
+#              the file system remains writable and fully compliant with strict 
+#              UEFI firmwares (e.g., ThinkPads), avoiding the read-only and 
+#              unbootable constraints caused by raw 'dd' partition writing.
+#
+# Arguments:
+#   $1 - TARGET_DRIVE (The whole block device, e.g., /dev/sdb)
+#   $2 - ISO_PATH     (Path to the source Linux .iso file)
+#
+# Notes:
+#   - Avoids raw 'dd' on partitions which would overwrite the filesystem type 
+#     with ISO9660/UDF, making it unreadable for many real-hardware UEFIs.
+#   - Automatically creates temporary mount points to loop-mount the ISO 
+#     and copies files safely using rsync (or fallback cp).
+#   - Preserves all other partitions (like partition 2 and 3) on the drive.
+#-------------------------------------------------------------------------------
 update_linux_partition() {
     local TARGET_DRIVE="$1"
     local ISO_PATH="$2"
     local linux_partition iso_size_bytes partition_size_bytes confirmation
+    local temp_iso_mnt
 
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         error "[!] A valid whole USB disk is required via --target-drive." >&2
@@ -541,24 +581,17 @@ update_linux_partition() {
         exit 1
     fi
 
-    iso_size_bytes=$(stat -c '%s' "$ISO_PATH")
-    partition_size_bytes=$(blockdev --getsize64 "$linux_partition")
-    if (( iso_size_bytes > partition_size_bytes )); then
-        error "[!] ISO does not fit in $linux_partition. $iso_size_bytes > $partition_size_bytes" >&2
-        exit 1
-    fi
-
     if ! mountpoint -q "$linux_partition"; then
         debug "[*] $linux_partition is not mounted."
     else
         sudo umount "$linux_partition" || {
-            error "[!] Could not unmount $linux_partition before writing the ISO." >&2
+            error "[!] Could not unmount $linux_partition before preparation." >&2
             exit 1
         }
     fi
 
     echo "--------------------------------------------------------"
-    echo "WARNING: Only $linux_partition will be overwritten."
+    echo "WARNING: Only $linux_partition will be formatted and overwritten."
     echo "Partition 2 and the partition table will not be changed."
     echo "ISO: $ISO_PATH"
     echo "--------------------------------------------------------"
@@ -568,10 +601,38 @@ update_linux_partition() {
         exit 1
     fi
 
-    debug "[*] Writing ISO image to $linux_partition... Please wait."
-    pv "$ISO_PATH" | sudo dd of="$linux_partition" bs=8M conv=fsync 
+    # 1. ÄNDERUNG: Partition sauber mit FAT32 formatieren (wichtig für UEFI)
+    debug "[*] Formatting $linux_partition as FAT32..."
+    sudo mkfs.vfat -F 32 -n "BOOT" "$linux_partition"
+
+    # 2. ÄNDERUNG: ISO temporär einhängen
+    debug "[*] Mounting ISO image..."
+    temp_iso_mnt=$(mktemp -d)
+    sudo mount -o loop,ro "$ISO_PATH" "$temp_iso_mnt"
+
+    # 3. ÄNDERUNG: Ziel-Partition temporär einhängen
+    debug "[*] Mounting target partition..."
+    local temp_target_mnt=$(mktemp -d)
+    sudo mount "$linux_partition" "$temp_target_mnt"
+
+    # 4. ÄNDERUNG: Dateien kopieren statt dd zu nutzen
+    debug "[*] Copying files from ISO to $linux_partition... Please wait."
+    # Nutzt rsync mit Fortschrittsanzeige (falls installiert, sonst cp -r nutzen)
+    if command -v rsync &>/dev/null; then
+        sudo rsync -ah --progress "$temp_iso_mnt/" "$temp_target_mnt/"
+    else
+        sudo cp -r "$temp_iso_mnt/"* "$temp_target_mnt/"
+    fi
+
+    # Sauberes Unmounten und Aufräumen
+    debug "[*] Syncing data and cleaning up..."
+    sudo umount "$temp_target_mnt"
+    sudo umount "$temp_iso_mnt"
+    rmdir "$temp_target_mnt"
+    rmdir "$temp_iso_mnt"
+
     sudo partprobe "$TARGET_DRIVE" 2>/dev/null || true
-    debug "[*] Updated $linux_partition. Partition 2 was not modified."
+    debug "[*] Updated $linux_partition successfully via file-copy method."
 }
 
 # Function to create an encrypted data partition using VeraCrypt
