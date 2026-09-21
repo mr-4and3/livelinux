@@ -1,0 +1,12 @@
+#!/bin/bash
+
+### BEGIN INIT INFO
+# Provides:          live-usb-mount
+# Required-Start:    $local_fs
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Mount live USB partitions
+### END INIT INFO
+
+/usr/local/sbin/live_usb_mount.sh

@@ -1,0 +1,13 @@
+[Unit]
+Description=Mount USB partitions for live system
+DefaultDependencies=no
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/live_usb_mount.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

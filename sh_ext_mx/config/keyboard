@@ -1,0 +1,5 @@
+XKBLAYOUT="de"
+XKBMODEL="pc105"
+XKBVARIANT="nodeadkeys"
+XKBOPTIONS=""
+BACKSPACE="guess"

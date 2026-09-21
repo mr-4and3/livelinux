@@ -5,6 +5,7 @@
 set -eE
 
 source common.sh
+source install.sh
 
 main() {
     # Main function to execute the script
@@ -16,6 +17,7 @@ main() {
     # Trap to ensure cleanup on exit
     trap error_handler ERR
 
+    POSITIONAL=()
     local LINUX_SIZE_GB=4 # Größe der Linux-Partition in Gigabyte (Rest wird Datenpartition)
     local CRYPTED_PARTITION_SIZE_GB=1 # Größe der verschlüsselten Partition in Gigabyte (0 = Rest des Sticks)
     local NONE_ENCRYPTED_SIZE_GB=1 # Größe der unverschlüsselten Partition in Gigabyte (0 = keine unverschlüsselte Partition)
@@ -30,7 +32,7 @@ main() {
                 local ISO_PATH="$2"
                 shift 2
                 ;;
-            --usb-drive)
+            --usb-device|--usb-drive)
                 if [[ $# -lt 2 ]]; then
                     echo "[!] Missing value for --usb-drive." >&2
                     exit 1
@@ -72,11 +74,11 @@ main() {
                 shift 2
                 ;;
             -h|--help)
-                usage
+                usage ${ISO_PATH}
                 exit 0
                 ;;
 
-                system_check|list_sticks|parted|format|update_linux|encrypt|format_data|all)
+                system_check|list-sticks|parted|format|update-linux|encrypt|format-data|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -104,10 +106,10 @@ main() {
 
     # Execute the selected positional argument (step)
     case "$STEP" in 
-        system_check)
+        system-check)
             system_check
             ;;
-        list_sticks)
+        list-sticks)
             list_sticks 
             exit 0
             ;;
@@ -119,9 +121,9 @@ main() {
             format "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             exit 0
             ;;
-        update_linux)
+        update-linux)
             if [[ -z "${TARGET_DRIVE:-}" || -z "${ISO_PATH:-}" ]]; then
-                echo "[!] update_linux requires --usb-drive and --iso." >&2
+                echo "[!] update-linux requires --usb-drive and --iso." >&2
                 usage >&2
                 exit 1
             fi
@@ -137,7 +139,7 @@ main() {
             encrypt "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
             exit 0
             ;;
-        format_data)
+        format-data)
             format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             ;;
         all)
@@ -146,7 +148,7 @@ main() {
                 exit 1
             fi
 
-            all "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH" "$CRYPTED_PARTITION_SIZE_GB"
+            all "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             ;;
         *)
             echo "Unknown step: $STEP"
@@ -169,9 +171,10 @@ all() {
     local LINUX_SIZE_GB="$2"
     local ISO_PATH="$3"
     local CRYPTED_PARTITION_SIZE_GB="$4"
+    local NONE_ENCRYPTED_SIZE_GB="$5"
 
     system_check
-    if  ! confirm_target_drive "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" ; then
+    if  ! confirm_target_drive "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB" ; then
         echo "[!] Target drive not confirmed. Aborting."
         exit 1
     fi
@@ -232,17 +235,6 @@ error_handler() {
         "$exit_code" "$BASH_COMMAND" >&2
 }
 
-warning() {
-    printf '\033[33mWARNING: %s\033[0m\n' "$*" >&2
-}
-
-debug() {
-    printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
-}
-
-error() {
-    printf '\033[31mERROR: %s\033[0m\n' "$*" >&2
-}
 usage() {
     cat <<EOF
 Usage: sudo $0 [options] [step]
@@ -270,6 +262,7 @@ Options:
 
 Commands (default: all):
   system_check                 Check required commands
+  install                      Install required system packages
   list_sticks                  List disks and ask for a target
   parted                       part the usb stick
   format                       Erase signatures and create a GPT
@@ -308,15 +301,15 @@ validate_size() {
     fi
 }
 
-# Check for installed veracrypt
-check_veracrypt_installed() {
-    if ! command -v veracrypt &> /dev/null; then
-        echo "[!] VeraCrypt (CLI) not found. Try to install it first."
+# Check for installed tcplay
+check_tcplay_installed() {
+    if ! command -v tcplay &> /dev/null; then
+        echo "[!] tcplay not found. Try to install it first."
         sudo apt-get update
-        sudo apt-get install -y veracrypt
-        echo "Check if VeraCrypt is installed correctly and rerun the script."
-        if ! command -v veracrypt &> /dev/null; then
-            echo "[!] VeraCrypt installation failed. Please install it manually."
+        sudo apt-get install -y tcplay
+        echo "Check if tcplay is installed correctly and rerun the script."
+        if ! command -v tcplay &> /dev/null; then
+            echo "[!] tcplay installation failed. Please install it manually."
             exit 1
         fi
     fi
@@ -328,15 +321,30 @@ system_check() {
         exit 1
     fi
 
-    check_veracrypt_installed
+    check_tcplay_installed
     # Check for required system commands
-    local required_commands=("lsblk" "parted" "partprobe" "dd" "veracrypt" "wipefs" "blockdev" "findmnt" "pv")
+    local required_commands=("lsblk" "parted" "partprobe" "dd" "tcplay" "wipefs" "blockdev" "findmnt" "pv")
     for cmd in "${required_commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
             echo "[!] Required command '$cmd' not found. Please install it."
             exit 1
         fi
     done
+}
+
+#-----------------------------------------------------------------------------
+# Function to install required system packages if they are not already installed
+#-----------------------------------------------------------------------------
+install() {
+    install_veracrypt
+    install_lsblk
+    install_parted
+    install_partprobe
+    install_dd
+    install_wipefs
+    install_blockdev
+    install_findmnt
+    install_pv
 }
 
 # Function to check if the target drive is the same as the system disk
@@ -373,7 +381,7 @@ confirm_target_drive() {
         echo "[!] Target must be a whole disk, not a partition or mapped device." >&2
         exit 1
     fi
-    check_target_is_not_system_disk
+    check_target_is_not_system_disk ${TARGET_DRIVE}
 
     # Security warning and confirmation
     echo "--------------------------------------------------------"
@@ -381,12 +389,12 @@ confirm_target_drive() {
     echo "Linux Partition: ${LINUX_SIZE_GB} GB"
     if [ "$CRYPTED_PARTITION_SIZE_GB" ]; then
         if (( CRYPTED_PARTITION_SIZE_GB > 0 )); then
-            echo "Encrypted Data Partition: ${CRYPTED_PARTITION_SIZE_GB} GB (VeraCrypt + exFAT)"
+            echo "Encrypted Data Partition: ${CRYPTED_PARTITION_SIZE_GB} GB (TrueCrypt + exFAT)"
         else
             echo "Encrypted Data Partition: no encrypted partition created"
         fi
     else
-        echo "Encrypted Data Partition: Remaining space (VeraCrypt + exFAT)"
+        echo "Encrypted Data Partition: Remaining space (TrueCrypt + exFAT)"
     fi
     if [ "$NONE_ENCRYPTED_SIZE_GB" ]; then
         if (( NONE_ENCRYPTED_SIZE_GB > 0 )); then
@@ -603,6 +611,10 @@ update_linux_partition() {
 
     # 1. ÄNDERUNG: Partition sauber mit FAT32 formatieren (wichtig für UEFI)
     debug "[*] Formatting $linux_partition as FAT32..."
+    # check is the partition mounted, if yes, unmount it
+    for p in $(lsblk -nrpo NAME /dev/sda | tail -n +2); do
+        sudo umount "$p" 2>/dev/null || true
+    done
     sudo mkfs.vfat -F 32 -n "BOOT" "$linux_partition"
 
     # 2. ÄNDERUNG: ISO temporär einhängen
@@ -635,12 +647,13 @@ update_linux_partition() {
     debug "[*] Updated $linux_partition successfully via file-copy method."
 }
 
-# Function to create an encrypted data partition using VeraCrypt
+# Function to create an encrypted data partition using TrueCrypt-compatible tcplay
 # $1: Target drive (e.g., /dev/sdb)
 # $2: LINUX_SIZE_GB (size of the Linux partition in GB)
 encrypt() {
     local TARGET_DRIVE="$1"
     local LINUX_SIZE_GB="$2"
+    local mapping="usbdata"
 
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         list_sticks
@@ -664,35 +677,24 @@ encrypt() {
     local partition_size_bytes
     partition_size_bytes=$(blockdev --getsize64 "$PART2")
     
-    # Confirm the encryption of the second partition with the user
-    warning "$PART2 will be formatted and encrypted with VeraCrypt. All data on this partition will be lost!"
-    read -r -p "Do you want to continue? (yes/NO): " confirmation
-    if [ "$confirmation" != yes ]; then
-        error "Aborted."
-        exit 1
-    fi
-
-    # Create encrypted data partition with VeraCrypt
-    ##############################################################################
-    debug "create Encrypted Data Partition with VeraCrypt "
+    # Create a TrueCrypt-compatible encrypted data partition with tcplay.
+    # tcplay creates the encrypted header and then the user maps the volume.
+    debug "create Encrypted Data Partition with tcplay "
     debug "--------------------------------------------------------"
     echo "Please set a password for your encrypted volume."
-    echo "Windows computers will need this password later to unlock it!"
+    echo "Windows computers can unlock it later with VeraCrypt or TrueCrypt."
     echo "--------------------------------------------------------"
 
-    # VeraCrypt command-line command to create the encrypted volume
-    # --volume-type=normal: Standard-VeraCrypt container
-    # --encryption=AES: Secure and extremely fast standard (hardware-accelerated)
-    # --hash=SHA-512: Secure cryptographic hash
-    # --filesystem=exfat: Guaranteed native readability under Windows and Linux
-    sudo veracrypt --text --create "$PART2" \
-        --volume-type=normal \
-        --encryption=AES \
-        --hash=SHA-512 \
-        --filesystem=exfat \
-        --pim=0 \
-        --keyfiles=""
-    
+    # Unmap an existing device with the same name, if any.
+    sudo tcplay -u "$mapping" 2>/dev/null || true
+
+    # Create the TrueCrypt volume on the partition.
+    sudo tcplay -c -d "$PART2" -a SHA512 -b AES-256-XTS
+
+    # Map it and format the resulting device as exFAT.
+    sudo tcplay -m "$mapping" -d "$PART2"
+    sudo mkfs.exfat -F -n "DATA" "/dev/mapper/$mapping"
+
     debug "[*] Encrypted data partition created on $PART2."
 
     return 0
@@ -721,14 +723,9 @@ format_none_encrypted_partition() {
         exit 1
     fi
 
-    read -r -p "Do you want to format the third partition $PART3 as exFAT for unencrypted data storage? (yes/NO): " confirmation
-    if [ "$confirmation" != yes ]; then
-        error "Aborted."
-        exit 1
-    fi
     # Format the third partition as exFAT for unencrypted data storage
     debug "Formatting unencrypted data partition $PART3 as exFAT..."
-    sudo mkfs.exfat -n "DATA" "$PART3"
+    sudo mkfs.exfat -F -n "DATA" "$PART3"
     debug "[*] Unencrypted data partition formatted on $PART3."
 }
 
