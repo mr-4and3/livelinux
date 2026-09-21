@@ -5,6 +5,7 @@
 set -eE
 
 source common.sh
+source install.sh
 
 main() {
     # Main function to execute the script
@@ -16,6 +17,7 @@ main() {
     # Trap to ensure cleanup on exit
     trap error_handler ERR
 
+    POSITIONAL=()
     local LINUX_SIZE_GB=4 # Größe der Linux-Partition in Gigabyte (Rest wird Datenpartition)
     local CRYPTED_PARTITION_SIZE_GB=1 # Größe der verschlüsselten Partition in Gigabyte (0 = Rest des Sticks)
     local NONE_ENCRYPTED_SIZE_GB=1 # Größe der unverschlüsselten Partition in Gigabyte (0 = keine unverschlüsselte Partition)
@@ -30,7 +32,7 @@ main() {
                 local ISO_PATH="$2"
                 shift 2
                 ;;
-            --usb-drive)
+            --usb-device|--usb-drive)
                 if [[ $# -lt 2 ]]; then
                     echo "[!] Missing value for --usb-drive." >&2
                     exit 1
@@ -72,11 +74,11 @@ main() {
                 shift 2
                 ;;
             -h|--help)
-                usage
+                usage ${ISO_PATH}
                 exit 0
                 ;;
 
-                system_check|list_sticks|parted|format|update_linux|encrypt|format_data|all)
+                system_check|list-sticks|parted|format|update-linux|encrypt|format-data|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -104,10 +106,10 @@ main() {
 
     # Execute the selected positional argument (step)
     case "$STEP" in 
-        system_check)
+        system-check)
             system_check
             ;;
-        list_sticks)
+        list-sticks)
             list_sticks 
             exit 0
             ;;
@@ -119,9 +121,9 @@ main() {
             format "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             exit 0
             ;;
-        update_linux)
+        update-linux)
             if [[ -z "${TARGET_DRIVE:-}" || -z "${ISO_PATH:-}" ]]; then
-                echo "[!] update_linux requires --usb-drive and --iso." >&2
+                echo "[!] update-linux requires --usb-drive and --iso." >&2
                 usage >&2
                 exit 1
             fi
@@ -137,7 +139,7 @@ main() {
             encrypt "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
             exit 0
             ;;
-        format_data)
+        format-data)
             format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             ;;
         all)
@@ -146,7 +148,7 @@ main() {
                 exit 1
             fi
 
-            all "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH" "$CRYPTED_PARTITION_SIZE_GB"
+            all "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             ;;
         *)
             echo "Unknown step: $STEP"
@@ -169,9 +171,10 @@ all() {
     local LINUX_SIZE_GB="$2"
     local ISO_PATH="$3"
     local CRYPTED_PARTITION_SIZE_GB="$4"
+    local NONE_ENCRYPTED_SIZE_GB="$5"
 
     system_check
-    if  ! confirm_target_drive "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" ; then
+    if  ! confirm_target_drive "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB" ; then
         echo "[!] Target drive not confirmed. Aborting."
         exit 1
     fi
@@ -232,17 +235,6 @@ error_handler() {
         "$exit_code" "$BASH_COMMAND" >&2
 }
 
-warning() {
-    printf '\033[33mWARNING: %s\033[0m\n' "$*" >&2
-}
-
-debug() {
-    printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
-}
-
-error() {
-    printf '\033[31mERROR: %s\033[0m\n' "$*" >&2
-}
 usage() {
     cat <<EOF
 Usage: sudo $0 [options] [step]
@@ -270,6 +262,7 @@ Options:
 
 Commands (default: all):
   system_check                 Check required commands
+  install                      Install required system packages
   list_sticks                  List disks and ask for a target
   parted                       part the usb stick
   format                       Erase signatures and create a GPT
@@ -339,6 +332,21 @@ system_check() {
     done
 }
 
+#-----------------------------------------------------------------------------
+# Function to install required system packages if they are not already installed
+#-----------------------------------------------------------------------------
+install() {
+    install_veracrypt
+    install_lsblk
+    install_parted
+    install_partprobe
+    install_dd
+    install_wipefs
+    install_blockdev
+    install_findmnt
+    install_pv
+}
+
 # Function to check if the target drive is the same as the system disk
 # $1: Target drive (e.g., /dev/sdb)
 check_target_is_not_system_disk() {
@@ -373,7 +381,7 @@ confirm_target_drive() {
         echo "[!] Target must be a whole disk, not a partition or mapped device." >&2
         exit 1
     fi
-    check_target_is_not_system_disk
+    check_target_is_not_system_disk ${TARGET_DRIVE}
 
     # Security warning and confirmation
     echo "--------------------------------------------------------"
@@ -603,6 +611,10 @@ update_linux_partition() {
 
     # 1. ÄNDERUNG: Partition sauber mit FAT32 formatieren (wichtig für UEFI)
     debug "[*] Formatting $linux_partition as FAT32..."
+    # check is the partition mounted, if yes, unmount it
+    for p in $(lsblk -nrpo NAME /dev/sda | tail -n +2); do
+        sudo umount "$p" 2>/dev/null || true
+    done
     sudo mkfs.vfat -F 32 -n "BOOT" "$linux_partition"
 
     # 2. ÄNDERUNG: ISO temporär einhängen

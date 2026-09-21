@@ -8,6 +8,9 @@ set -eE
 # shellcheck source=common.sh
 # shellcheck disable=SC1091
 source common.sh
+# shellcheck source=install.sh
+# shellcheck disable=SC1091
+source install.sh
 
 # main function to handle command line arguments and execute the appropriate steps
 main() {
@@ -20,7 +23,7 @@ main() {
     CHROOT_DIR="$WORK_DIR/chroot"
     IMAGE_DIR="$WORK_DIR/image"
     ISO_OUTPUT="./custom-linux.iso"
-    CUSTOMIZE_SCRIPT="./customize_tor_browser.sh"
+    CUSTOMIZE_SCRIPT="./sh_ext_mx/customize_tor_browser.sh"
 
     POSITIONAL=()
 
@@ -47,7 +50,7 @@ main() {
                 usage "$ISO_SRC" "$WORK_DIR" "$TARGET_DRIVE" "$MNT_DIR" "$CHROOT_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 exit 0
                 ;;                
-            clean|system_check|prepare|extract|customize|shell|make_iso|create_final_iso|all)
+            clean|system-check|system-prepare|prepare|extract|customize|shell|make-iso|install|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -68,14 +71,14 @@ main() {
 
     # Trap to ensure cleanup on exit
     trap error_handler ERR
-    trap cleanup_workdir EXIT
+    trap 'cleanup_workdir "$WORK_DIR"' EXIT
 
     for STEP in "${POSITIONAL[@]}"; do
         case "$STEP" in
             clean)
                 clean "$WORK_DIR"
                 ;;
-            system_check)
+            system-check)
                 system_check
                 ;;
             prepare)
@@ -90,13 +93,16 @@ main() {
             shell)
                 shell "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
-            make_iso)
+            make-iso)
                 new_mx_squashfs "$IMAGE_DIR" "$CHROOT_DIR"
                 create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 ;;
-            create_final_iso)
+            create-final-iso)
                 create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 ;;    
+            install)
+                install_loc
+                ;;
             all)
                 prepare "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 linuxfs "$WORK_DIR" "$MNT_DIR" "$ISO_SRC" "$IMAGE_DIR"
@@ -144,16 +150,16 @@ Default values:
   ISO_OUTPUT:   $ISO_OUTPUT
 
 Commands:
-    system_check       check required system commands
-    system_prepare     install required system packages
-
+    system-check       check required system commands
+    install            install required system packages
+ 
     clean              delete the work directory after confirmation
     prepare            run clean, ensure work directories, and run system_prepare
     extract            mount ISO, copy files, and uncompress linuxfs
     customize          prepare chroot and run commands inside chroot
     shell              open an interactive shell inside the chroot
-    make_iso           create final hybrid bootable ISO
-    all                run prepare, extract, customize, make_iso
+    make-iso           create final hybrid bootable ISO
+    all                run prepare, extract, customize, make-iso
 EOF2
 }
 
@@ -191,6 +197,11 @@ system_check() {
     success "All required commands are available."
 }
 
+install_loc() {
+    install_rsync
+    install_xorriso
+    install_unsquashfs
+}
 
 # Function for working with work directories
 ###############################################################################
@@ -229,9 +240,8 @@ prepare() {
     local CHROOT_DIR=$2
     local IMAGE_DIR=$3
     clean "$WORK_DIR"
-    echo "=== Prepare, install tools ==="
+    debug "prepare, install tools"
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
-    system_prepare
 }
 
 
@@ -242,7 +252,7 @@ clean() {
     echo "clean $WORK_DIR"
     if [ -d "$WORK_DIR" ]; then
         warning "Work directory $WORK_DIR already exists. It will be deleted."
-        read -pr "Do you want to continue? (y/n): " choice
+        read -r -p "Do you want to continue? (y/n): " choice
         if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
             echo "Cancelled."
             exit 1
@@ -335,7 +345,7 @@ customize() {
         echo "Chroot mounts already exist."
     fi
 
-    customize_exe "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+    customize_exe "$WORK_DIR" "$CHROOT_DIR"
 }
 
 # function to unmount chroot mounts
@@ -409,13 +419,20 @@ create_final_iso() {
         exit 1
     fi
 
-    local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
-    if [ ! -f "$isohdpfx" ]; then
-        isohdpfx="/usr/lib/syslinux/modules/bios/isohdpfx.bin"
-    fi
+    local isohdpfx=""
+    for candidate in \
+        "/usr/lib/ISOLINUX/isohdpfx.bin" \
+        "/usr/lib/syslinux/modules/bios/isohdpfx.bin" \
+        "/usr/lib/syslinux/bios/isohdpfx.bin" \
+        "/usr/share/syslinux/isohdpfx.bin"; do
+        if [ -f "$candidate" ]; then
+            isohdpfx="$candidate"
+            break
+        fi
+    done
 
-    if [ ! -f "$isohdpfx" ]; then
-        error "isohdpfx.bin not found. Install syslinux/isolinux first."
+    if [ -z "$isohdpfx" ]; then
+        error "isohdpfx.bin not found. Install the 'syslinux' package first."
         exit 1
     fi
 
