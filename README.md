@@ -1,164 +1,167 @@
 # Custom antiX / MX Live ISO Builder
 
-This project builds a customized, hybrid-bootable antiX or MX Linux ISO from a source ISO, modifies the extracted live system in a chroot, and then rebuilds the live filesystem and bootable image.
+This repository creates a customized live antiX or MX Linux ISO from a source image, modifies the extracted live system in a chroot, rebuilds the SquashFS payload, and packages the result as a bootable ISO. A second script can write that ISO to a USB drive and prepare encrypted and/or unencrypted data partitions.
 
-The project focuses on the active build workflow used for live ISO customization and USB deployment. Older helper scripts kept in an archive directory are not part of the main documentation.
+The active workflow is centered on the scripts in the repository root:
 
-## What this project does
+- `install.sh` — installs host dependencies
+- `iso-change.sh` — builds and customizes the ISO
+- `deploy-to-usb.sh` — deploys the ISO to a USB stick
 
-- extracts a source ISO into a working directory
-- mounts the live filesystem and unpacks its `antiX/linuxfs`
-- customizes the system inside a chroot
-- rebuilds the SquashFS live system
-- creates a final bootable ISO
-- writes the ISO to a USB stick with a second encrypted data partition
+Older helper scripts and files in `archive/` are kept for reference, but they are not the main supported workflow.
 
-## Main scripts
+## What the project does
 
-- `iso-change.sh` — main ISO creation workflow
-- `deploy-to-usb.sh` — deploys the generated ISO to USB and creates the encrypted data partition
-
-Archive or legacy helper scripts are intentionally not documented here because they are not part of the current active workflow.
+- validates the system environment
+- prepares a working directory
+- mounts the source ISO and extracts the live filesystem
+- customizes the chrooted live system
+- repacks the live filesystem into a new SquashFS image
+- creates the final hybrid bootable ISO
+- writes the ISO to USB with optional encrypted data storage
 
 ## Requirements
 
 - Debian-based Linux host, preferably MX Linux or Ubuntu
 - root privileges via `sudo`
-- valid antiX or MX Linux ISO
+- a valid antiX or MX Linux ISO source
 - internet access when packages are installed inside the chroot
-- enough disk space for the extracted live system and rebuilt image
-- USB drive large enough for the Linux + data partitions
+- enough disk space for the extracted live filesystem and rebuilt image
+- a USB drive large enough for the Linux + data partitions
 
-Required host tools:
+Required host tools include:
 
 - `bash`
 - `sudo`
-- `mount` / `umount`
 - `rsync`
-- `unsquashfs` / `mksquashfs`
 - `xorriso`
-- `chroot`
-- `findmnt`
-- `realpath`
-- `md5sum`
-- `lsblk`
+- `unsquashfs`
 - `parted`
-- `partprobe`
+- `lsblk`
+- `findmnt`
 - `dd`
+- `partprobe`
+- `realpath`
+- `mount` / `umount`
 
-The script installs the packages needed for the ISO build step, especially `squashfs-tools`, `xorriso`, and `rsync`.
+The helper script `install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
 
 ## Quick start
 
-Show help:
+1. Install the required host packages:
+
+```bash
+sudo ./install.sh
+```
+
+2. Show the available ISO builder commands:
 
 ```bash
 sudo ./iso-change.sh --help
 ```
 
-Build a custom ISO from a source image:
+3. Build a custom ISO from a source image:
 
 ```bash
 sudo ./iso-change.sh \
-  --iso-input /path/to/source.iso \
+  --iso /path/to/source.iso \
   --workdir ./work \
   --iso-output ./custom-linux.iso \
   all
 ```
 
-Create the final ISO file in the working directory:
-
-```bash
-sudo ./iso-change.sh \
-  --workdir ./work \
-  --iso-output ./custom-linux.iso \
-  make_iso
-```
-
-Deploy the ISO to a USB drive:
+4. Deploy the generated ISO to a USB stick:
 
 ```bash
 sudo ./deploy-to-usb.sh \
   --usb-drive /dev/sdX \
-  --iso /path/to/custom-linux.iso \
+  --iso ./custom-linux.iso \
   --sizes 4,1,1 \
   all
 ```
 
-The `--sizes` option takes a comma-separated list in the format:
+The `--sizes` option accepts the format:
 
 ```bash
 --sizes linux_size,encrypted_size,none_encrypted_size
 ```
 
-Example:
-
-```bash
-sudo ./deploy-to-usb.sh --usb-drive /dev/sdX --iso /path/to/custom-linux.iso --sizes 4,1,1 all
-```
-
-You can also set the partitions individually:
+You can also configure each partition size individually:
 
 ```bash
 sudo ./deploy-to-usb.sh \
   --usb-drive /dev/sdX \
-  --iso /path/to/custom-linux.iso \
+  --iso ./custom-linux.iso \
   --linux-size 4 \
   --encrypted-size 1 \
   --none-encrypted-size 1 \
   all
 ```
 
-## Build workflow
+## ISO build workflow
 
-The standard build sequence is:
+The active sequence in `iso-change.sh` is:
 
 ```text
+clean
 prepare
-linuxfs
+extract
 customize
-new_mx_squashfs
-create_final_iso
+make-iso
 ```
 
-The final ISO is created as:
+The full workflow can also be run as a single command:
 
-```text
-./custom-linux.iso
+```bash
+sudo ./iso-change.sh all
 ```
+
+The script supports these commands:
+
+- `system-check`
+- `clean`
+- `prepare`
+- `extract`
+- `customize`
+- `shell`
+- `make-iso`
+- `all`
 
 ## Working directories
 
-The script uses these folders under the working directory:
+The build uses the following folders under the selected work directory:
 
 - `work/mnt` — mounted source ISO
-- `work/chroot` — extracted live root filesystem for modifications
+- `work/chroot` — extracted live root filesystem for modification
 - `work/image` — rebuilt ISO content before packaging
 
 ## USB layout
 
-The USB deployment script creates a hybrid USB with up to three main partitions:
+The USB deployment script creates a hybrid USB disk with up to three main partitions:
 
 1. Partition 1: bootable Linux ISO image
 2. Partition 2: VeraCrypt-encrypted exFAT data partition
 3. Partition 3: optional unencrypted exFAT data partition
 
-The sizes are configured either with a single comma-separated value:
+Example:
 
 ```bash
---sizes 4,1,1
+sudo ./deploy-to-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
 ```
 
-or with the individual options:
+This creates a live USB with:
 
-```bash
---linux-size 4 --encrypted-size 1 --none-encrypted-size 1
-```
+- 15 GB Linux partition
+- 20 GB encrypted data partition
+- 5 GB unencrypted data partition
 
-## Important warning
+## Important warnings
 
-The USB deployment script completely erases the selected target drive, including its partition table and existing data. Select the correct device carefully and never target the system disk.
+- The USB tool permanently deletes the selected target disk and recreates its partition table.
+- The script refuses to target the disk containing the running system.
+- Double-check the device path before running any destructive command.
+- Always test the final ISO on the target hardware before relying on it for production use.
 
 ## Notes
 
-This repository is designed for rebuilding and customizing a live antiX/MX Linux environment. It is not a general-purpose package manager project and it is not meant to document every archived helper script from older experiments.
+This repository is meant for building and customizing a live antiX/MX Linux environment. It is not a general-purpose package manager or a documentation project for every old helper script in the `archive/` folder.

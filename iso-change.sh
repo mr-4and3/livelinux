@@ -8,8 +8,56 @@ set -eE
 # shellcheck source=common.sh
 # shellcheck disable=SC1091
 source common.sh
+# shellcheck source=install.sh
+# shellcheck disable=SC1091
+source install.sh
+
+# Usage and main function
+##############################################################################
+
+# function to display usage information
+# $1: ISO_SRC
+# $2: WORK_DIR
+# $3: TARGET_DRIVE
+# $4: MNT_DIR
+# $5: CHROOT_DIR
+# $6: IMAGE_DIR
+usage() {
+    local ISO_SRC=$1
+    local WORK_DIR=$2
+    local TARGET_DRIVE=$3
+    local MNT_DIR=$4
+    local CHROOT_DIR=$5
+    local IMAGE_DIR=$6
+
+    cat <<EOF2
+Usage: $0 [--iso <path>] [--workdir <path>] [--iso-output <path>] [command]
+
+Default values:
+  ISO:          $ISO_SRC
+  WORKDIR:      $WORK_DIR
+  TARGET_DRIVE: $TARGET_DRIVE
+  MNT_DIR:      $MNT_DIR
+  CHROOT:       $CHROOT_DIR
+  IMAGE:        $IMAGE_DIR
+  ISO_OUTPUT:   $ISO_OUTPUT
+
+Commands:
+    system-check       check required system commands
+ 
+    clean              delete the work directory after confirmation
+    prepare            run clean, ensure work directories, and prepare the build tree
+    extract            mount ISO, copy files, and uncompress linuxfs
+    customize          prepare chroot and run commands inside chroot
+    shell              open an interactive shell inside the chroot
+    make-iso           create final hybrid bootable ISO
+    all                run prepare, extract, customize, make-iso
+EOF2
+}
+
 
 # main function to handle command line arguments and execute the appropriate steps
+##############################################################################
 main() {
     # Default values
     ISO_SRC="./MX-25_Xfce_x64.iso"
@@ -20,14 +68,14 @@ main() {
     CHROOT_DIR="$WORK_DIR/chroot"
     IMAGE_DIR="$WORK_DIR/image"
     ISO_OUTPUT="./custom-linux.iso"
-    CUSTOMIZE_SCRIPT="./customize_tor_browser.sh"
+    CUSTOMIZE_SCRIPT="./sh_ext_mx/customize_tor_browser.sh"
 
     POSITIONAL=()
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --iso-input)
+            --iso)
                 ISO_SRC="$2"
                 shift 2
                 ;;
@@ -47,7 +95,7 @@ main() {
                 usage "$ISO_SRC" "$WORK_DIR" "$TARGET_DRIVE" "$MNT_DIR" "$CHROOT_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 exit 0
                 ;;                
-            clean|system_check|prepare|extract|customize|shell|make_iso|create_final_iso|all)
+            clean|system-check|prepare|extract|customize|shell|make-iso|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -68,14 +116,14 @@ main() {
 
     # Trap to ensure cleanup on exit
     trap error_handler ERR
-    trap cleanup_workdir EXIT
+    trap 'cleanup_workdir "$WORK_DIR"' EXIT
 
     for STEP in "${POSITIONAL[@]}"; do
         case "$STEP" in
             clean)
                 clean "$WORK_DIR"
                 ;;
-            system_check)
+            system-check)
                 system_check
                 ;;
             prepare)
@@ -90,11 +138,8 @@ main() {
             shell)
                 shell "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
                 ;;
-            make_iso)
+            make-iso)
                 new_mx_squashfs "$IMAGE_DIR" "$CHROOT_DIR"
-                create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
-                ;;
-            create_final_iso)
                 create_final_iso "$WORK_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 ;;    
             all)
@@ -111,50 +156,6 @@ main() {
                 ;;
         esac
     done
-}
-
-# Helper Functions
-##############################################################################
-
-# function to display usage information
-# $1: ISO_SRC
-# $2: WORK_DIR
-# $3: TARGET_DRIVE
-# $4: MNT_DIR
-# $5: CHROOT_DIR
-# $6: IMAGE_DIR
-usage() {
-    ISO_SRC=$1
-    WORK_DIR=$2
-    TARGET_DRIVE=$3
-    MNT_DIR=$4
-    CHROOT_DIR=$5
-    IMAGE_DIR=$6
-
-    cat <<EOF2
-Usage: $0 [--iso-input <path>] [--workdir <path>] [--iso-output <path>] [command]
-
-Default values:
-  ISO:          $ISO_SRC
-  WORKDIR:      $WORK_DIR
-  TARGET_DRIVE: $TARGET_DRIVE
-  MNT_DIR:      $MNT_DIR
-  CHROOT:       $CHROOT_DIR
-  IMAGE:        $IMAGE_DIR
-  ISO_OUTPUT:   $ISO_OUTPUT
-
-Commands:
-    system_check       check required system commands
-    system_prepare     install required system packages
-
-    clean              delete the work directory after confirmation
-    prepare            run clean, ensure work directories, and run system_prepare
-    extract            mount ISO, copy files, and uncompress linuxfs
-    customize          prepare chroot and run commands inside chroot
-    shell              open an interactive shell inside the chroot
-    make_iso           create final hybrid bootable ISO
-    all                run prepare, extract, customize, make_iso
-EOF2
 }
 
 # System functions
@@ -190,7 +191,6 @@ system_check() {
 
     success "All required commands are available."
 }
-
 
 # Function for working with work directories
 ###############################################################################
@@ -229,9 +229,8 @@ prepare() {
     local CHROOT_DIR=$2
     local IMAGE_DIR=$3
     clean "$WORK_DIR"
-    echo "=== Prepare, install tools ==="
+    debug "prepare, install tools"
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
-    system_prepare
 }
 
 
@@ -242,7 +241,7 @@ clean() {
     echo "clean $WORK_DIR"
     if [ -d "$WORK_DIR" ]; then
         warning "Work directory $WORK_DIR already exists. It will be deleted."
-        read -pr "Do you want to continue? (y/n): " choice
+        read -r -p "Do you want to continue? (y/n): " choice
         if [[ "$choice" != "y" && "$choice" != "Y" ]]; then
             echo "Cancelled."
             exit 1
@@ -335,7 +334,7 @@ customize() {
         echo "Chroot mounts already exist."
     fi
 
-    customize_exe "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+    customize_exe "$CHROOT_DIR"
 }
 
 # function to unmount chroot mounts
@@ -409,13 +408,20 @@ create_final_iso() {
         exit 1
     fi
 
-    local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
-    if [ ! -f "$isohdpfx" ]; then
-        isohdpfx="/usr/lib/syslinux/modules/bios/isohdpfx.bin"
-    fi
+    local isohdpfx=""
+    for candidate in \
+        "/usr/lib/ISOLINUX/isohdpfx.bin" \
+        "/usr/lib/syslinux/modules/bios/isohdpfx.bin" \
+        "/usr/lib/syslinux/bios/isohdpfx.bin" \
+        "/usr/share/syslinux/isohdpfx.bin"; do
+        if [ -f "$candidate" ]; then
+            isohdpfx="$candidate"
+            break
+        fi
+    done
 
-    if [ ! -f "$isohdpfx" ]; then
-        error "isohdpfx.bin not found. Install syslinux/isolinux first."
+    if [ -z "$isohdpfx" ]; then
+        error "isohdpfx.bin not found. Install the 'syslinux' package first."
         exit 1
     fi
 
