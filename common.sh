@@ -45,6 +45,40 @@ check_root() {
     fi
 }
 
+# Function to ask for sudo credentials when the script is started without sudo.
+ensure_sudo() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        return 0
+    fi
+
+    if ! command -v sudo >/dev/null 2>&1; then
+        printf '%s\n' "sudo is not installed." >&2
+        exit 1
+    fi
+
+    if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        local sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"
+        if [[ -z "$sudo_pass" ]]; then
+            printf '%s\n' "sudo password cancelled." >&2
+            exit 1
+        fi
+        printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
+            printf '%s\n' "sudo authentication failed." >&2
+            exit 1
+        }
+        return 0
+    fi
+
+    local sudo_pass=""
+    read -r -s -p "sudo Passwort: " sudo_pass
+    printf '\n'
+    printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
+        printf '%s\n' "sudo authentication failed." >&2
+        exit 1
+    }
+}
+
+
 header() {
     printf "* %s\n" "$*" >&2
 }

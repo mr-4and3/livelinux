@@ -69,9 +69,11 @@ main() {
     IMAGE_DIR="$WORK_DIR/image"
     ISO_OUTPUT="./custom-linux.iso"
     CUSTOMIZE_SCRIPT="./sh_ext_mx/customize_tor_browser.sh"
-
+    PASSWD_SCRIPT="./sh_ext_mx/set_passwd.sh"
     POSITIONAL=()
 
+    check_root
+    
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -91,11 +93,15 @@ main() {
                 CUSTOMIZE_SCRIPT="$2"
                 shift 2
                 ;;
+            --passwd-script)
+                PASSWD_SCRIPT="$2"
+                shift 2
+                ;;
             --help|-h)
                 usage "$ISO_SRC" "$WORK_DIR" "$TARGET_DRIVE" "$MNT_DIR" "$CHROOT_DIR" "$IMAGE_DIR" "$ISO_OUTPUT"
                 exit 0
                 ;;                
-            clean|system-check|prepare|extract|customize|shell|make-iso|all)
+            clean|system-check|prepare|extract|customize|shell|passwd|make-iso|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -137,6 +143,9 @@ main() {
                 ;;
             shell)
                 shell "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+                ;;
+            passwd)
+                set_passwd "$PASSWD_SCRIPT" "$CHROOT_DIR"
                 ;;
             make-iso)
                 new_mx_squashfs "$IMAGE_DIR" "$CHROOT_DIR"
@@ -335,6 +344,23 @@ customize() {
     fi
 
     customize_exe "$CHROOT_DIR"
+}
+
+set_passwd() {
+    local PASSWD_SCRIPT=$1
+    local CHROOT_DIR="$2"
+    header "set passwd for demo user"
+    source "$PASSWD_SCRIPT"
+
+    ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"
+
+    if ! chroot_mounts_ready "$CHROOT_DIR"; then
+        mount_for_chroot "$CHROOT_DIR" "$WORK_DIR" "$IMAGE_DIR"
+    else
+        echo "Chroot mounts already exist."
+    fi
+
+    set_passwd "$CHROOT_DIR"
 }
 
 # function to unmount chroot mounts
