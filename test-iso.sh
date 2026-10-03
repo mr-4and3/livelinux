@@ -1,15 +1,14 @@
 #!/bin/bash
 set -e
 
-if [ "$EUID" -ne 0 ]; then
-    echo "Bitte als root ausführen: sudo ./test_iso.sh"
-    exit 1
-fi
+source "$(dirname "$0")/common.sh"
+
+check_root
 
 ISO="${1:-./custom-linux.iso}"
 
 if [ ! -f "$ISO" ]; then
-    echo "ISO nicht gefunden: $ISO"
+    echo "ISO not found: $ISO"
     exit 1
 fi
 

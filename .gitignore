@@ -4,3 +4,5 @@ image/*
 work/*
 *.iso
 test_mnt/*
+*.tar.*
+sh_ext_mx/download/*

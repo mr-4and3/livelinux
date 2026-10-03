@@ -2,16 +2,13 @@
 
 source "$(dirname "$0")/install.sh"
 
+source "$(dirname "$0")/common.sh"
+
 main() {
     echo "Starting USB stick test..."
     # Add your test logic here
 
-    # test for being run as root
-    if [ "$EUID" -ne 0 ]
-    then
-        echo "Please run as root"
-        exit
-    fi
+    check_root
 
     # test for installed qemu
     if ! command -v qemu-system-x86_64 &> /dev/null
@@ -37,6 +34,8 @@ main() {
         exit
     fi
 
+    TARGET_DRIVE=""
+    
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in

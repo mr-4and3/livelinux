@@ -7,6 +7,57 @@ set -eE
 source common.sh
 source install.sh
 
+usage() {
+    cat <<EOF
+Usage: sudo $0 [options] [step]
+
+Deploys a custom Linux ISO to a USB drive.
+The selected drive is completely erased.
+
+Options:
+    --iso <path>                    Path to the custom Linux ISO
+                                                          (default: $ISO_PATH)
+    --usb-drive <path>              Existing USB disk for update_linux
+    --linux-size <gigabytes>        Size of partition 1 in GB
+                                                          (default: $LINUX_SIZE_GB)
+    --encrypted-size <gigabytes>    Size of the VeraCrypt-encrypted data partition in GB
+                                                          (default: $CRYPTED_PARTITION_SIZE_GB;
+                                                           0 = remaining space)
+    --none-encrypted-size <gigabytes>
+                                   Size of the unencrypted data partition in GB
+                                                          (default: $NONE_ENCRYPTED_SIZE_GB;
+                                                           0 = no unencrypted partition)
+    --sizes <linux,encrypted,none>  Comma-separated sizes in GB for all partitions.
+                                                          Example: --sizes 15,20,5
+                                                          Overrides the individual size flags above.
+    -h, --help                     Show this help and exit
+
+Commands (default: all):
+  system_check                 Check required commands
+  install                      Install required system packages
+  list_sticks                  List disks and ask for a target
+  parted                       part the usb stick
+  format                       Erase signatures and create a GPT
+  update-linux                 Replace only partition 1; keep partition 2
+  encrypt                      encrypt partion 2
+  format_data                  format data partion
+  all                          do all for one usb-stick
+
+The script creates:
+  Partition 1                  Custom Linux ISO image
+  Partition 2                  VeraCrypt-encrypted exFAT data partition
+  Partition 3                  Optional unencrypted exFAT data partition
+
+The deployment step requires a USB-compatible ISO layout. The generated ISO
+must be tested on the target hardware before relying on it for booting.
+
+Examples:
+  sudo $0 --iso /path/to/custom-linux.iso --linux-size 15 --encrypted-size 20
+  sudo $0 --iso /path/to/custom-linux.iso --sizes 15,20,5
+EOF
+}
+
+
 main() {
     # Main function to execute the script
     # This function is called at the end of the script
@@ -22,6 +73,9 @@ main() {
     local CRYPTED_PARTITION_SIZE_GB=1 # Größe der verschlüsselten Partition in Gigabyte (0 = Rest des Sticks)
     local NONE_ENCRYPTED_SIZE_GB=1 # Größe der unverschlüsselten Partition in Gigabyte (0 = keine unverschlüsselte Partition)
 
+    # Check for root privileges
+    check_root
+    
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --iso)
@@ -233,56 +287,6 @@ error_handler() {
     local exit_code=$?
     printf '\033[31mERROR: command failed with exit code %d: %s\033[0m\n' \
         "$exit_code" "$BASH_COMMAND" >&2
-}
-
-usage() {
-    cat <<EOF
-Usage: sudo $0 [options] [step]
-
-Deploys a custom Linux ISO to a USB drive.
-The selected drive is completely erased.
-
-Options:
-    --iso <path>                    Path to the custom Linux ISO
-                                                          (default: $ISO_PATH)
-    --usb-drive <path>              Existing USB disk for update_linux
-    --linux-size <gigabytes>        Size of partition 1 in GB
-                                                          (default: $LINUX_SIZE_GB)
-    --encrypted-size <gigabytes>    Size of the VeraCrypt-encrypted data partition in GB
-                                                          (default: $CRYPTED_PARTITION_SIZE_GB;
-                                                           0 = remaining space)
-    --none-encrypted-size <gigabytes>
-                                   Size of the unencrypted data partition in GB
-                                                          (default: $NONE_ENCRYPTED_SIZE_GB;
-                                                           0 = no unencrypted partition)
-    --sizes <linux,encrypted,none>  Comma-separated sizes in GB for all partitions.
-                                                          Example: --sizes 15,20,5
-                                                          Overrides the individual size flags above.
-    -h, --help                     Show this help and exit
-
-Commands (default: all):
-  system_check                 Check required commands
-  install                      Install required system packages
-  list_sticks                  List disks and ask for a target
-  parted                       part the usb stick
-  format                       Erase signatures and create a GPT
-  update_linux                 Replace only partition 1; keep partition 2
-  encrypt                      encrypt partion 2
-  format_data                  format data partion
-  all                          do all for one usb-stick
-
-The script creates:
-  Partition 1                  Custom Linux ISO image
-  Partition 2                  VeraCrypt-encrypted exFAT data partition
-  Partition 3                  Optional unencrypted exFAT data partition
-
-The deployment step requires a USB-compatible ISO layout. The generated ISO
-must be tested on the target hardware before relying on it for booting.
-
-Examples:
-  sudo $0 --iso /path/to/custom-linux.iso --linux-size 15 --encrypted-size 20
-  sudo $0 --iso /path/to/custom-linux.iso --sizes 15,20,5
-EOF
 }
 
 # Function to validate that a given size is a positive integer

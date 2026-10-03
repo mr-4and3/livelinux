@@ -62,7 +62,8 @@ main_install() {
     if command -v pacman >/dev/null 2>&1; then
         install_package "ovmf" "" "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"
     fi
-    install_syslinux
+    install_package "syslinux" "syslinux"
+    install_package "zenity" "zenity"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

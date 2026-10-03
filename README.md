@@ -8,7 +8,6 @@ The active workflow is centered on the scripts in the repository root:
 - `iso-change.sh` — builds and customizes the ISO
 - `deploy-to-usb.sh` — deploys the ISO to a USB stick
 
-Older helper scripts and files in `archive/` are kept for reference, but they are not the main supported workflow.
 
 ## What the project does
 
