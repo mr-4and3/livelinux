@@ -113,7 +113,7 @@ customize_exe() {
     "tor-browser.desktop" \
     "torbrowser-launcher" \
     "Script for opening the Tor Browser" \
-    "/usr/local/bin/torbrowser-launcher.sh" \
+    "/usr/bin/torbrowser-launcher" \
     "/usr/share/icons/Papirus/64x64/apps/tor-browser.svg"
     #set_deb "$CHROOT_DIR" "https://github.com/veracrypt/VeraCrypt/releases/download/VeraCrypt_1.26.29/veracrypt-1.26.29-Debian-13-amd64.deb"
 }

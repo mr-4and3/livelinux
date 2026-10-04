@@ -250,12 +250,6 @@ all() {
     delete_existing_partition_table "$TARGET_DRIVE" 
     format "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
     update_linux_partition "$TARGET_DRIVE" "$ISO_PATH"
-    if (( CRYPTED_PARTITION_SIZE_GB > 0 )); then
-        encrypt "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
-    fi
-    if (( NONE_ENCRYPTED_SIZE_GB > 0 )); then
-        format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
-    fi
 }
 
 # Function to format the target drive and create partitions
@@ -697,11 +691,27 @@ encrypt() {
 
     # Map it and format the resulting device as exFAT.
     sudo tcplay -m "$mapping" -d "$PART2"
-    sudo mkfs.exfat -F -n "DATA" "/dev/mapper/$mapping"
+    mkfs_exfat_with_label "DATA" "/dev/mapper/$mapping"
 
     debug "[*] Encrypted data partition created on $PART2."
 
     return 0
+}
+
+mkfs_exfat_with_label() {
+    local label="$1"
+    local device="$2"
+    local help_output
+
+    help_output=$(mkfs.exfat --help 2>&1 || true)
+    if grep -Eq '(^|[[:space:]])-L([[:space:]]|\||$)|--volume-label([=[:space:]]|$)' <<< "$help_output"; then
+        sudo mkfs.exfat -L "$label" "$device"
+    elif grep -Eq '(^|[[:space:]])-n([[:space:]]|\||$)|--label([=[:space:]]|$)' <<< "$help_output"; then
+        sudo mkfs.exfat -n "$label" "$device"
+    else
+        echo "Warning: mkfs.exfat has no recognized label option; formatting without a label."
+        sudo mkfs.exfat "$device"
+    fi
 }
 
 # Function to format the third partition as exFAT for unencrypted data storage
@@ -729,7 +739,7 @@ format_none_encrypted_partition() {
 
     # Format the third partition as exFAT for unencrypted data storage
     debug "Formatting unencrypted data partition $PART3 as exFAT..."
-    sudo mkfs.exfat -F -n "DATA" "$PART3"
+    mkfs_exfat_with_label "DATA" "$PART3"
     debug "[*] Unencrypted data partition formatted on $PART3."
 }
 
