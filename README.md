@@ -5,9 +5,8 @@ This repository creates a customized live antiX or MX Linux ISO from a source im
 The active workflow is centered on the scripts in the repository root:
 
 - `install.sh` — installs host dependencies
-- `iso-change.sh` — builds and customizes the ISO
-- `deploy-to-usb.sh` — deploys the ISO to a USB stick
-
+- `st-iso.sh` — builds and customizes the ISO
+- `st-usb.sh` — deploys the ISO to a USB stick
 
 ## What the project does
 
@@ -56,13 +55,13 @@ sudo ./install.sh
 2. Show the available ISO builder commands:
 
 ```bash
-sudo ./iso-change.sh --help
+sudo ./st-iso.sh --help
 ```
 
 3. Build a custom ISO from a source image:
 
 ```bash
-sudo ./iso-change.sh \
+sudo ./st-iso.sh \
   --iso /path/to/source.iso \
   --workdir ./work \
   --iso-output ./custom-linux.iso \
@@ -72,7 +71,7 @@ sudo ./iso-change.sh \
 4. Deploy the generated ISO to a USB stick:
 
 ```bash
-sudo ./deploy-to-usb.sh \
+sudo ./st-usb.sh \
   --usb-drive /dev/sdX \
   --iso ./custom-linux.iso \
   --sizes 4,1,1 \
@@ -88,7 +87,7 @@ The `--sizes` option accepts the format:
 You can also configure each partition size individually:
 
 ```bash
-sudo ./deploy-to-usb.sh \
+sudo ./st-usb.sh \
   --usb-drive /dev/sdX \
   --iso ./custom-linux.iso \
   --linux-size 4 \
@@ -99,7 +98,7 @@ sudo ./deploy-to-usb.sh \
 
 ## ISO build workflow
 
-The active sequence in `iso-change.sh` is:
+The active sequence in `st-iso.sh` is:
 
 ```text
 clean
@@ -112,7 +111,7 @@ make-iso
 The full workflow can also be run as a single command:
 
 ```bash
-sudo ./iso-change.sh all
+sudo ./st-iso.sh all
 ```
 
 The script supports these commands:
@@ -145,7 +144,7 @@ The USB deployment script creates a hybrid USB disk with up to three main partit
 Example:
 
 ```bash
-sudo ./deploy-to-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
+sudo ./st-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
 ```
 
 This creates a live USB with:
@@ -164,3 +163,11 @@ This creates a live USB with:
 ## Notes
 
 This repository is meant for building and customizing a live antiX/MX Linux environment. It is not a general-purpose package manager or a documentation project for every old helper script in the `archive/` folder.
+
+## Todos
+
+- Time is not correct in qemu
+- ALT + TAB or WIN key caused lost control in qemu
+- torbrowser-update
+- veracrypt
+

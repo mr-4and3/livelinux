@@ -50,6 +50,7 @@ Commands:
     extract            mount ISO, copy files, and uncompress linuxfs
     customize          prepare chroot and run commands inside chroot
     shell              open an interactive shell inside the chroot
+    passwd             set password for demo user inside chroot
     make-iso           create final hybrid bootable ISO
     all                run prepare, extract, customize, make-iso
 EOF2

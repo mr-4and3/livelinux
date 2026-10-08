@@ -4,6 +4,13 @@ source "$(dirname "$0")/install.sh"
 
 source "$(dirname "$0")/common.sh"
 
+# Script usage information
+usage() {
+    echo "Usage: $0 ----usb-device <device_path>"
+    echo "Example: $0 --usb-device /dev/sda"
+}
+
+# Main function to run the USB stick test   
 main() {
     echo "Starting USB stick test..."
     # Add your test logic here
@@ -42,12 +49,6 @@ main() {
             --usb-device)
                 TARGET_DRIVE="$2"
                 shift 2
-                ;;
-            --install)
-                install_package "qemu-system-x86" "qemu-system-x86_64"
-                install_package "qemu-system-gui" "qemu-system-gui"
-                install_package "edk2-ovmf" "" "/usr/share/edk2/x64/OVMF.4m.fd"
-                shift
                 ;;
             --help|-h)
                 usage 
@@ -95,13 +96,6 @@ main() {
         -drive file="$TARGET_DRIVE",if=none,id=usb0,format=raw \
         -device usb-storage,drive=usb0 \
         -boot order=c
-}
-
-
-# Script usage information
-usage() {
-    echo "Usage: $0 --stick_device <device_path>"
-    echo "Example: $0 --stick_device /dev/sda"
 }
 
 # Script error handling
