@@ -40,6 +40,22 @@ flowchart LR
     Apps <--> Internet
 ```
 
+# How to create the USB stick
+
+## Tooling
+
+The tooling used to create the USB stick is:
+
+| script | description | configurations | commands |
+| ------ | ----------- | -------------- | -------- |
+| st-iso.sh | Builds the custom live ISO from the source antiX image and applies the live-system customizations. | `--iso`<br>`--workdir`<br>`--iso-output`<br>`--customize-script`<br>`--passwd-script` | `system-check`<br>`clean`<br> `prepare`<br>`extract`<br>`customize`<br>`shell`<br>`passwd`<br>`make-iso`<br>`all` |
+| st-usb.sh | Writes the generated ISO to a USB drive and creates the Linux, encrypted data, and optional unencrypted data partitions. | `--iso`,<br>`--usb-drive`<br>`--linux-size`<br>`--encrypted-size`<br>`--none-encrypted-size`<br>`--sizes` | `system_check`<br>`list-sticks`<br>`parted`<br>`format`<br>`update-linux`<br>`encrypt`<br>`format-data`<br>`all` |
+| st-test-iso.sh | Starts the generated ISO in QEMU to test booting in a virtual machine. | ISO path as the first argument (default: `./custom-linux.iso`) | none; executes immediately with the ISO file |
+| st-test-usb.sh | Tests a USB device by booting it in QEMU with UEFI firmware. | `--usb-device <device_path>` | none; executes immediately with the target USB device |
+| st-crypt.sh | Opens and closes the VeraCrypt-encrypted USB data partition for normal file access. | `-d/--device`<br> `-m/--mapping`<br> `-p/--mountpoint` | `open`<br> `close` |
+
+
+
 ## Preparing the USB stick
 
 Build the custom ISO with `st-iso.sh` as described below in ISO section. Then write it to a USB drive with:
@@ -94,14 +110,14 @@ This keeps the secure storage protected while still allowing a simple file trans
 After login use the `open_crypt` starter or open the terminal and type in
 
 ```bash
-st_crypt.sh open
+st-crypt.sh open
 ```
 
 ## Close encrypted partion
 After login use the `close_crypt` starter or open the terminal and type in
 
 ```bash
-st_crypt close
+st-crypt.sh close
 ```
 
 # How to prepare a ISO
@@ -110,21 +126,31 @@ st_crypt close
 
 ```mermaid
 flowchart TD
-    A([Start]) --> B["Preflight check:<br/>sudo ./st-iso.sh system-check"]
-    B --> C{Required tools available?}
-    C -- No --> D["sudo ./install.sh"]
-    D --> B
-    C -- Yes --> E["Start build:<br/>all or individual commands"]
-    E --> F["prepare<br/>Clean work directory after confirmation<br/>and create build directories"]
-    F --> G["extract<br/>Mount source ISO, copy boot files,<br/>and extract antiX/linuxfs"]
-    G --> H["customize<br/>Prepare chroot and run<br/>customization script"]
-    H --> I{Optional password change<br/>in individual build?}
-    I -- Yes, individual commands only --> J["Run separately:<br/>sudo ./st-iso.sh passwd"]
-    I -- No --> K["make-iso"]
-    J --> K
-    K --> L["Unmount chroot,<br/>create SquashFS and MD5"]
-    L --> M["Check boot files and create<br/>hybrid ISO with xorriso"]
-    M --> N([Done: custom-linux.iso])
+
+    subgraph Prepare[Prepare]
+        Clean["clean<br>Clean work directory after confirmation"]
+
+        EnsureWorkDir["ensure_workdirs<br>create build directories"]
+        Clean --> EnsureWorkDir
+    end
+
+
+    Start([Start]) --> Systemcheck["Preflight check:<br/>sudo ./st-iso.sh system-check"]
+    Start --> Clean
+    Systemcheck --> QReqTool{Required tools available?}
+    QReqTool -- No --> Install["sudo ./install.sh"]
+    Install --> Systemcheck
+    QReqTool -- Yes --> StartBuild["Start build:<br/>all or individual commands"]
+    StartBuild --> Prepare
+    Prepare --> Extract["extract<br/>Mount source ISO, copy boot files,<br/>and extract antiX/linuxfs"]
+    Extract --> Customize["customize<br/>Prepare chroot and run<br/>customization script"]
+    Customize --> QPassword{Optional password change<br/>in individual build?}
+    QPassword -- Yes, individual commands only --> SetPassword["Run separately:<br/>sudo ./st-iso.sh passwd"]
+    QPassword -- No --> MakeIso["sudo st-iso make-iso"]
+    SetPassword --> MakeIso
+    MakeIso --> Umount["Unmount chroot,<br/>create SquashFS and MD5"]
+    Umount --> CheckXorriso["Check boot files and create<br/>hybrid ISO with xorriso"]
+    CheckXorriso --> Done([Done: custom-linux.iso])
 ```
 
 The command sequence implemented by `st-iso.sh` is:

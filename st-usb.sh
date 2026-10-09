@@ -8,6 +8,10 @@ source common.sh
 source install.sh
 
 usage() {
+    local ISO_PATH="${1:-./custom-linux.iso}"
+    local LINUX_SIZE_GB="${2:-4}"
+    local CRYPTED_PARTITION_SIZE_GB="${3:-1}"
+
     cat <<EOF
 Usage: sudo $0 [options] [step]
 
@@ -128,17 +132,17 @@ main() {
                 shift 2
                 ;;
             -h|--help)
-                usage ${ISO_PATH}
+                usage "${ISO_PATH:-./custom-linux.iso}" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB"
                 exit 0
                 ;;
 
-                system_check|list-sticks|parted|format|update-linux|encrypt|format-data|all)
+                system_check|list_sticks|list-sticks|parted|format|update-linux|encrypt|format-data|all)
                 POSITIONAL+=("$1")
                 shift
                 ;;
             *)
                 echo "[!] Unknown option: $1" >&2
-                usage >&2
+                usage ${ISO_PATH:-./custom-linux.iso} "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
                 exit 1
                 ;;
         esac
@@ -165,6 +169,10 @@ main() {
             ;;
         list-sticks)
             list_sticks 
+            exit 0
+            ;;
+        list_sticks)
+            list_sticks
             exit 0
             ;;
         parted)

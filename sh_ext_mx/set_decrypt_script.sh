@@ -23,20 +23,20 @@ set_decrypt_script() {
         return 1
     fi
 
-    if [ ! -f "$SCRIPT_DIR/../sh_ext_all/scripts/st_crypt.sh" ]; then
-        error "Missing decrypt script: $SCRIPT_DIR/st_crypt.sh"
+    if [ ! -f "$SCRIPT_DIR/../sh_ext_all/scripts/st-crypt.sh" ]; then
+        error "Missing decrypt script: $SCRIPT_DIR/st-crypt.sh"
         return 1
     fi
 
-    sudo cp "$SCRIPT_DIR/../sh_ext_all/scripts/st_crypt.sh" "$CHROOT_DIR/usr/local/bin/st_crypt.sh"
-    sudo chmod +x "$CHROOT_DIR/usr/local/bin/st_crypt.sh"
+    sudo cp "$SCRIPT_DIR/../sh_ext_all/scripts/st-crypt.sh" "$CHROOT_DIR/usr/local/bin/st-crypt.sh"
+    sudo chmod +x "$CHROOT_DIR/usr/local/bin/st-crypt.sh"
 
     # Create a desktop entry for the decrypt script
     set_desktop "$CHROOT_DIR" \
     "open_crypt.desktop" \
     "open_crypt" \
     "Script for opening the encrypted volume" \
-    "/usr/local/bin/st_crypt.sh open" \
+    "/usr/local/bin/st-crypt.sh open" \
     "/usr/share/icons/Papirus/64x64/apps/terminal.svg"
 
     # Create a desktop entry for the close script
@@ -44,6 +44,6 @@ set_decrypt_script() {
     "close_crypt.desktop" \
     "close_crypt" \
     "Script for closing the encrypted volume" \
-    "/usr/local/bin/st_crypt.sh close" \
+    "/usr/local/bin/st-crypt.sh close" \
     "/usr/share/icons/Papirus/64x64/apps/terminal.svg"
 }
