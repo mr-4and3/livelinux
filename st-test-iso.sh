@@ -3,12 +3,26 @@ set -e
 
 source "$(dirname "$0")/common.sh"
 
-check_root
+# login in kvm group
+if ! groups | grep -q '\bkvm\b'; then
+    newgrp kvm
+    if [ $? -ne 0 ]; then
+        error "Failed to switch to 'kvm' group. Please ensure you have the necessary permissions."
+        exit 1
+    fi  
+fi
+
+# Allow root or a user with access to KVM.
+if ! groups | grep -q '\bkvm\b' && [ "$(id -u)" -ne 0 ]; then
+    error "This script must be run as root or by a user in the 'kvm' group."
+    exit 1
+fi
+#check_root
 
 ISO="${1:-./custom-linux.iso}"
 
 if [ ! -f "$ISO" ]; then
-    echo "ISO not found: $ISO"
+    error "ISO not found: $ISO"
     exit 1
 fi
 
@@ -25,7 +39,7 @@ for candidate in \
 done
 
 if [ -z "$OVMF_FILE" ]; then
-    echo "UEFI-Firmware nicht gefunden. Bitte qemu-system-x86 und ovmf installieren."
+    error "UEFI-Firmware nicht gefunden. Bitte qemu-system-x86 und ovmf installieren."
     exit 1
 fi
 
