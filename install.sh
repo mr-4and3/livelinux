@@ -2,6 +2,8 @@
 
 set -u
 
+source "$(dirname "$0")/common.sh"
+
 install_package() {
     local package_name="$1"
     local check_command="${2:-$package_name}"
@@ -48,6 +50,9 @@ install_syslinux() {
 }
 
 main_install() {
+
+    ensure_sudo
+
     install_package "rsync" "rsync"
     install_package "xorriso" "xorriso"
     install_package "squashfs-tools" "unsquashfs"
@@ -64,6 +69,13 @@ main_install() {
     fi
     install_package "syslinux" "syslinux"
     install_package "zenity" "zenity"
+
+    sudo usermod -aG kvm "$USER"
+
+    # Check if the user is in the kvm group
+    if ! groups "$USER" | grep -q '\bkvm\b'; then
+        error "User $USER is not in the 'kvm' group. Please log out and log back in for the group change to take effect."
+    fi  
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
