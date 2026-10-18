@@ -92,11 +92,24 @@ customize_exe() {
         return 1
     fi
 
+    
     set_keyboard_de "$CHROOT_DIR"
     set_lightdm_conf "$CHROOT_DIR"
     set_decrypt_script "$CHROOT_DIR" 
     set_usb_live_mount "$CHROOT_DIR"
-    set_update "$CHROOT_DIR" "exfat-fuse exfatprogs ntfs-3g dmsetup xdotool tcplay torbrowser-launcher zenity"
+    
+    package_list=()
+    package_list+=exfat-fuse
+    package_list+=exfatprogs
+    package_list+=ntfs-3g
+    package_list+=dmsetup
+    package_list+=xdotool
+    package_list+=tcplay
+    package_list+=torbrowser-launcher
+    package_list+=zenity
+    package_list+=spice-vdagent
+
+    set_update "$CHROOT_DIR" "$package_list"
     
     # remove the mx-wel*.desktop files to avoid the welcome screen
     sudo find "$CHROOT_DIR" \

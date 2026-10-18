@@ -1,7 +1,6 @@
 #!/bin/bash
 
 source "$(dirname "$0")/install.sh"
-
 source "$(dirname "$0")/common.sh"
 
 # Script usage information
@@ -15,7 +14,7 @@ main() {
     echo "Starting USB stick test..."
     # Add your test logic here
 
-    check_root
+#    check_root
 
     # test for installed qemu
     if ! command -v qemu-system-x86_64 &> /dev/null
@@ -52,7 +51,7 @@ main() {
                 ;;
             --help|-h)
                 usage 
-                exit 0
+                exit 0,
                 ;;
             *)
                 error "Unknown parameter: $1"
@@ -67,6 +66,23 @@ main() {
         error "No target drive specified."
     fi
 
+    # Check permissions for the target drive
+    if [ ! -r "$TARGET_DRIVE" ] || [ ! -w "$TARGET_DRIVE" ]; then
+        warning "Insufficient permissions for the target drive: $TARGET_DRIVE."
+        # check for setfacl capability
+        if command -v setfacl &> /dev/null; then
+            echo "Attempting to set ACL permissions for the target drive..."
+            setfacl -m u:"$(whoami)":rw "$TARGET_DRIVE"
+            if [ $? -ne 0 ]; then
+                error "Failed to set ACL permissions for the target drive: $TARGET_DRIVE. Please run the script with appropriate permissions or as root."
+                exit 1
+            fi
+        else
+            error "setfacl command not found. Please run the script with appropriate permissions or as root."
+            exit 1
+        fi
+    fi
+        
     # Prefer a real graphical window when a desktop session exists and a GUI backend is available.
     QEMU_VGA="std"
     if qemu-system-x86_64 -device help 2>/dev/null | grep -qi qxl; then
@@ -86,7 +102,7 @@ main() {
         echo "No desktop session detected; using console output."
     fi
 
-    sudo qemu-system-x86_64 \
+    qemu-system-x86_64 \
         -enable-kvm \
         -m 4096 \
         -vga "$QEMU_VGA" \

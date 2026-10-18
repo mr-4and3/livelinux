@@ -6,11 +6,13 @@ warning() {
     logger -t livelinux "WARNING: $*"
 }
 
+# function to print info messages in blue
 debug() {
     printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
     logger -t livelinux "DEBUG: $*"
 }
 
+# function to print error messages in red
 error() {
     local message="${1:-unknown error}"
     local caller_script="${BASH_SOURCE[1]:-${0}}"
@@ -21,10 +23,17 @@ error() {
     logger -t livelinux "ERROR: $message in $caller_script:$caller_line"
 }
 
+# function to print success messages in green
 success() {
     printf '\033[32mSUCCESS: %s\033[0m\n' "$*" >&2
     logger -t livelinux "SUCCESS: $*"
 }
+
+# function to print header messages in bold
+header() {
+    printf "\033[1m* %s\033[0m\n" "$*" >&2
+}
+
 
 # Exit on any error and propagate ERR traps into functions
 error_handler() {
@@ -38,6 +47,7 @@ error_handler() {
     logger -t livelinux "ERROR: command failed with exit code $exit_code: $BASH_COMMAND in $caller_script:$caller_line"
 }
 
+# Trap ERR to call the error_handler function
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         error "This script must be run as root. Please use sudo."
@@ -78,7 +88,10 @@ ensure_sudo() {
     }
 }
 
-
-header() {
-    printf "* %s\n" "$*" >&2
+# Function to quote shell arguments for safe re-execution
+quote_shell_argument() {
+    local value=${1//\'/\'\\\'\'}
+    printf "'%s'" "$value"
 }
+
+

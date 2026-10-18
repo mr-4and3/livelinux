@@ -69,6 +69,7 @@ main_install() {
     fi
     install_package "syslinux" "syslinux"
     install_package "zenity" "zenity"
+    install_package "virt-viewer" "virt-viewer"
 
     sudo usermod -aG kvm "$USER"
 

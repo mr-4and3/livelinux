@@ -73,7 +73,7 @@ main() {
     PASSWD_SCRIPT="./sh_ext_mx/set_passwd.sh"
     POSITIONAL=()
 
-    check_root
+    ensure_sudo
     
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
