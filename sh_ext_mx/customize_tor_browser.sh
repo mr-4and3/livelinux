@@ -99,15 +99,15 @@ customize_exe() {
     set_usb_live_mount "$CHROOT_DIR"
     
     package_list=()
-    package_list+=exfat-fuse
-    package_list+=exfatprogs
-    package_list+=ntfs-3g
-    package_list+=dmsetup
-    package_list+=xdotool
-    package_list+=tcplay
-    package_list+=torbrowser-launcher
-    package_list+=zenity
-    package_list+=spice-vdagent
+    package_list+="exfat-fuse "
+    package_list+="exfatprogs "
+    package_list+="ntfs-3g "
+    package_list+="dmsetup "
+    package_list+="xdotool "
+    package_list+="tcplay "
+    #package_list+="torbrowser-launcher "
+    package_list+="zenity "
+    package_list+="spice-vdagent "
 
     set_update "$CHROOT_DIR" "$package_list"
     
@@ -121,12 +121,5 @@ customize_exe() {
         \( -path "$CHROOT_DIR/proc" -o -path "$CHROOT_DIR/sys" -o -path "$CHROOT_DIR/dev" -o -path "$CHROOT_DIR/run" \) -prune -o \
         -type f -name "minstall.desktop" -exec rm -f {} +
              
-    #set_torbrowser "$CHROOT_DIR"
-    set_desktop "$CHROOT_DIR" \
-    "tor-browser.desktop" \
-    "torbrowser-launcher" \
-    "Script for opening the Tor Browser" \
-    "/usr/bin/torbrowser-launcher" \
-    "/usr/share/icons/Papirus/64x64/apps/tor-browser.svg"
-    #set_deb "$CHROOT_DIR" "https://github.com/veracrypt/VeraCrypt/releases/download/VeraCrypt_1.26.29/veracrypt-1.26.29-Debian-13-amd64.deb"
+    set_torbrowser "$CHROOT_DIR"
 }

@@ -55,7 +55,7 @@ check_root() {
     fi
 }
 
-# Function to ask for sudo credentials when the script is started without sudo.
+# Authenticate with sudo, then restart the entry-point script as root.
 ensure_sudo() {
     if [[ "$(id -u)" -eq 0 ]]; then
         return 0
@@ -76,16 +76,17 @@ ensure_sudo() {
             printf '%s\n' "sudo authentication failed." >&2
             exit 1
         }
-        return 0
+    else
+        local sudo_pass=""
+        read -r -s -p "sudo Passwort: " sudo_pass
+        printf '\n'
+        printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
+            printf '%s\n' "sudo authentication failed." >&2
+            exit 1
+        }
     fi
 
-    local sudo_pass=""
-    read -r -s -p "sudo Passwort: " sudo_pass
-    printf '\n'
-    printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
-        printf '%s\n' "sudo authentication failed." >&2
-        exit 1
-    }
+    exec sudo -- "$BASH" "$0" "$@"
 }
 
 # Function to quote shell arguments for safe re-execution
@@ -93,5 +94,4 @@ quote_shell_argument() {
     local value=${1//\'/\'\\\'\'}
     printf "'%s'" "$value"
 }
-
 

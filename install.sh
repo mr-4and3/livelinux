@@ -51,7 +51,7 @@ install_syslinux() {
 
 main_install() {
 
-    ensure_sudo
+    ensure_sudo "$@"
 
     install_package "rsync" "rsync"
     install_package "xorriso" "xorriso"
@@ -71,11 +71,12 @@ main_install() {
     install_package "zenity" "zenity"
     install_package "virt-viewer" "virt-viewer"
 
-    sudo usermod -aG kvm "$USER"
+    local username="${SUDO_USER:-$USER}"
+    sudo usermod -aG kvm "$username"
 
     # Check if the user is in the kvm group
-    if ! groups "$USER" | grep -q '\bkvm\b'; then
-        error "User $USER is not in the 'kvm' group. Please log out and log back in for the group change to take effect."
+    if ! groups "$username" | grep -q '\bkvm\b'; then
+        error "User $username is not in the 'kvm' group. Please log out and log back in for the group change to take effect."
     fi  
 }
 
