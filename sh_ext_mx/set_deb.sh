@@ -9,10 +9,10 @@ set_deb() {
 
     
     # 1. Benötigte Verzeichnisse erstellen
-    rm -rf $DOWNLOAD_DIR/
-    mkdir -p $DOWNLOAD_DIR/
+    rm -rf -- "${DOWNLOAD_DIR:?}/"
+    mkdir -p -- "$DOWNLOAD_DIR/"
 
-    curl -LO --output-dir $DOWNLOAD_DIR/ $DEB_URL
+    curl -LO --output-dir "$DOWNLOAD_DIR/" "$DEB_URL"
     chmod +x "$CHROOT_DIR/usr/bin/tor-browser"
     
     DEB_FILE=$(realpath "$DOWNLOAD_DIR/$DEB_NAME")
@@ -23,7 +23,7 @@ set_deb() {
 }
 
 # Run the function if the script is executed directly
-if [ "$0" = "$BASH_SOURCE" ]; then
+if [ "$0" = "${BASH_SOURCE[0]}" ]; then
     if [ $# -ne 1 ]; then
         echo "Usage: $0 <chroot_directory>"
         exit 1

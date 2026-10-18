@@ -7,6 +7,7 @@ The active workflow is centered on the scripts in the repository root:
 - `install.sh` — installs host dependencies
 - `st-iso.sh` — builds and customizes the ISO
 - `st-usb.sh` — deploys the ISO to a USB stick
+- `st-qemu-chroot.sh` — boots the extracted chroot directly in QEMU
 
 ## What the project does
 
@@ -43,6 +44,16 @@ Required host tools include:
 - `mount` / `umount`
 
 The helper script `install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
+
+## Development checks
+
+When developing the shell scripts, run `setup-pre-commit.sh` once after cloning the repository:
+
+```bash
+./setup-pre-commit.sh
+```
+
+The setup script installs `pre-commit` if needed, enables the local Git hook, and checks all existing files. Shell scripts are then checked with ShellCheck before each commit. Git does not enable repository hooks automatically on clone, so this setup step is needed for local checks. GitHub Actions also runs the same pre-commit checks on pushes and pull requests.
 
 ## Quick start
 
@@ -114,6 +125,32 @@ The full workflow can also be run as a single command:
 sudo ./st-iso.sh all
 ```
 
+## Boot the chroot directly in QEMU
+
+After the ISO has been extracted and customized, you can test `work/chroot`
+directly without rebuilding or booting the ISO:
+
+```bash
+sudo ./st-qemu-chroot.sh --workdir /work
+```
+
+The script copies the kernel and live initramfs from `work/image/antiX` into
+`work/qemu-direct`, adds the matching 9p kernel modules, and replaces the
+copied initramfs entry point with one that mounts `work/chroot` as the guest
+root filesystem. The original initramfs and chroot are not rebuilt or replaced.
+Use `--prepare-only` to create the QEMU files without starting the VM.
+The host needs `cpio`, `unmkinitramfs`, `modinfo`, `modprobe`, and QEMU.
+
+The guest accesses the host chroot read/write over 9p, so changes made in the
+VM also affect `work/chroot`. The live-system startup performed by the original
+initramfs is bypassed; this is a direct root-filesystem boot for testing, not an
+equivalent boot of the finished live ISO.
+The VM uses QEMU's SPICE display and the guest's `spice-vdagent` for clipboard
+sharing. Clipboard integration is available in the graphical session; a text
+TTY does not provide a graphical clipboard by itself.
+At boot, the script sets QEMU's keyboard map to German and applies the German
+`pc105`/`nodeadkeys` layout for X11 and the virtual console in the shared chroot.
+
 The script supports these commands:
 
 - `system-check`
@@ -170,4 +207,3 @@ This repository is meant for building and customizing a live antiX/MX Linux envi
 - ALT + TAB or WIN key caused lost control in qemu
 - torbrowser-update
 - veracrypt
-
