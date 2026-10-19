@@ -76,10 +76,12 @@ main() {
     local LINUX_SIZE_GB=4 # Größe der Linux-Partition in Gigabyte (Rest wird Datenpartition)
     local CRYPTED_PARTITION_SIZE_GB=1 # Größe der verschlüsselten Partition in Gigabyte (0 = Rest des Sticks)
     local NONE_ENCRYPTED_SIZE_GB=1 # Größe der unverschlüsselten Partition in Gigabyte (0 = keine unverschlüsselte Partition)
+    local ISO_PATH="./custom-linux.iso" # Pfad zum ISO-Image
 
     # Check for root privileges
-    check_root
-    
+    ensure_sudo "$@"
+
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --iso)
@@ -87,7 +89,7 @@ main() {
                     echo "[!] Missing value for --iso." >&2
                     exit 1
                 fi
-                local ISO_PATH="$2"
+                ISO_PATH="$2"
                 shift 2
                 ;;
             --usb-device|--usb-drive)
@@ -712,10 +714,11 @@ mkfs_exfat_with_label() {
     local help_output
 
     help_output=$(mkfs.exfat --help 2>&1 || true)
+    # Check if mkfs.exfat supports the -L or --volume-label option
     if grep -Eq '(^|[[:space:]])-L([[:space:]]|\||$)|--volume-label([=[:space:]]|$)' <<< "$help_output"; then
-        sudo mkfs.exfat -L "$label" "$device"
+        sudo mkfs.exfat -F -L "$label" "$device"
     elif grep -Eq '(^|[[:space:]])-n([[:space:]]|\||$)|--label([=[:space:]]|$)' <<< "$help_output"; then
-        sudo mkfs.exfat -n "$label" "$device"
+        sudo mkfs.exfat -F -n "$label" "$device"
     else
         echo "Warning: mkfs.exfat has no recognized label option; formatting without a label."
         sudo mkfs.exfat "$device"

@@ -70,6 +70,7 @@ main_install() {
     install_package "syslinux" "syslinux"
     install_package "zenity" "zenity"
     install_package "virt-viewer" "virt-viewer"
+    install_package "gpg" "gpg"
 
     local username="${SUDO_USER:-$USER}"
     sudo usermod -aG kvm "$username"

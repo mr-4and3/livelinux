@@ -14,7 +14,7 @@ main() {
     echo "Starting USB stick test..."
     # Add your test logic here
 
-#    check_root
+    ensure_sudo "$@"
 
     # test for installed qemu
     if ! command -v qemu-system-x86_64 &> /dev/null

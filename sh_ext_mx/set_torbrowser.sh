@@ -39,7 +39,6 @@ Terminal=false
 Type=Application
 Categories=Network;WebBrowser;
 EOL
-
 }
 
 set_torbrowser_link() {
