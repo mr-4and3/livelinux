@@ -1,6 +1,30 @@
 #!/bin/bash
+# Copyright (c) 2026 mr_4and3
+#
+# This file is part of livelinux.
+# It is licensed under the MIT License.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# For more information, see the MIT License: https://opensource.org/licenses/MIT
 
-source "$(dirname "$0")/install.sh"
+
 source "$(dirname "$0")/common.sh"
 
 # Script usage information
@@ -51,7 +75,7 @@ main() {
                 ;;
             --help|-h)
                 usage 
-                exit 0,
+                exit 0
                 ;;
             *)
                 error "Unknown parameter: $1"
@@ -123,4 +147,3 @@ error() {
 
 # Main script execution
 main "$@"
-

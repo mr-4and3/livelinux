@@ -98,7 +98,7 @@ customize_exe() {
     set_decrypt_script "$CHROOT_DIR" 
     set_usb_live_mount "$CHROOT_DIR"
     
-    package_list=()
+    local package_list=""
     package_list+="exfat-fuse "
     package_list+="exfatprogs "
     package_list+="ntfs-3g "

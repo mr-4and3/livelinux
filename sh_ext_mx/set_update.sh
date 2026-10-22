@@ -5,8 +5,6 @@ set_update() {
     local CHROOT_DIR="$1"
     local PACKAGE_LIST="${2:-}"
 
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
     if [ ! -d "$CHROOT_DIR" ]; then
         echo "Error: Chroot directory '$CHROOT_DIR' does not exist."
         return 1

@@ -1,4 +1,29 @@
 #!/bin/bash
+# Copyright (c) 2026 mr_4and3
+#
+# This file is part of livelinux.
+# It is licensed under the MIT License.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# For more information, see the MIT License: https://opensource.org/licenses/MIT
+
 
 # function to print warning messages in yellow
 warning() {
@@ -67,7 +92,8 @@ ensure_sudo() {
     fi
 
     if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-        local sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"
+        local sudo_pass
+        sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"
         if [[ -z "$sudo_pass" ]]; then
             printf '%s\n' "sudo password cancelled." >&2
             exit 1
@@ -94,4 +120,3 @@ quote_shell_argument() {
     local value=${1//\'/\'\\\'\'}
     printf "'%s'" "$value"
 }
-

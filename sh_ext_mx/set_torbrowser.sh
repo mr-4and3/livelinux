@@ -1,5 +1,7 @@
 #!/bin/bash
 
+source "$(dirname "${BASH_SOURCE[0]}")/set_desktop.sh"
+
 set_torbrowser_LOG_FILE="./set_torbrowser.log"
 
 set_torbrowser_log() {
@@ -24,21 +26,12 @@ set_torbrowser() {
 }
 
 set_torbrowser_desktop() {
-    local CHROOT_DIR=$1
-    local DESKTOP_ENTRY="$CHROOT_DIR/usr/share/applications/tor-browser.desktop"
-
-    # Create a desktop entry for the Tor Browser
-    DESKTOP_ENTRY="$CHROOT_DIR/usr/share/applications/tor-browser.desktop"
-    cat <<EOL > "$DESKTOP_ENTRY" 
-[Desktop Entry]
-Name=Tor Browser
-Comment=Tor Browser
-Exec=/usr/bin/tor-browser
-Icon=tor-browser
-Terminal=false
-Type=Application
-Categories=Network;WebBrowser;
-EOL
+    set_desktop "$1" \
+    "tor-browser.desktop" \
+    "Tor Browser" \
+    "Tor Browser" \
+    "/usr/bin/tor-browser" \
+    "tor-browser"
 }
 
 set_torbrowser_link() {

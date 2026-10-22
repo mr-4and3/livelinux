@@ -44,6 +44,16 @@ Required host tools include:
 
 The helper script `install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
 
+## Development checks
+
+When developing the shell scripts, run `setup-pre-commit.sh` once after cloning the repository:
+
+```bash
+./setup-pre-commit.sh
+```
+
+The setup script installs `pre-commit` if needed, enables the local Git hook, and checks all existing files. Shell scripts are then checked with ShellCheck before each commit. Git does not enable repository hooks automatically on clone, so this setup step is needed for local checks. GitHub Actions also runs the same pre-commit checks on pushes and pull requests.
+
 ## Quick start
 
 1. Install the required host packages:
@@ -170,4 +180,3 @@ This repository is meant for building and customizing a live antiX/MX Linux envi
 - ALT + TAB or WIN key caused lost control in qemu
 - torbrowser-update
 - veracrypt
-

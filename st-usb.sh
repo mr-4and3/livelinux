@@ -1,11 +1,36 @@
 #!/bin/bash
 # Script for automatic partitioning and encryption of the USB stick
+# Copyright (c) 2026 mr_4and3
+#
+# This file is part of livelinux.
+# It is licensed under the MIT License.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# For more information, see the MIT License: https://opensource.org/licenses/MIT
+
+
 
 # Set script to exit immediately if any command fails
 set -eE
 
 source common.sh
-source install.sh
 
 usage() {
     local ISO_PATH="${1:-./custom-linux.iso}"
@@ -38,7 +63,6 @@ Options:
 
 Commands (default: all):
   system_check                 Check required commands
-  install                      Install required system packages
   list_sticks                  List disks and ask for a target
   parted                       part the usb stick
   format                       Erase signatures and create a GPT
@@ -572,7 +596,7 @@ parted() {
 update_linux_partition() {
     local TARGET_DRIVE="$1"
     local ISO_PATH="$2"
-    local linux_partition iso_size_bytes partition_size_bytes confirmation
+    local linux_partition confirmation
     local temp_iso_mnt
 
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
@@ -632,7 +656,8 @@ update_linux_partition() {
 
     # 3. ÄNDERUNG: Ziel-Partition temporär einhängen
     debug "[*] Mounting target partition..."
-    local temp_target_mnt=$(mktemp -d)
+    local temp_target_mnt
+    temp_target_mnt=$(mktemp -d)
     sudo mount "$linux_partition" "$temp_target_mnt"
 
     # 4. ÄNDERUNG: Dateien kopieren statt dd zu nutzen
@@ -682,9 +707,6 @@ encrypt() {
     fi
 
     # Check size of the second partition
-    local partition_size_bytes
-    partition_size_bytes=$(blockdev --getsize64 "$PART2")
-    
     # Create a TrueCrypt-compatible encrypted data partition with tcplay.
     # tcplay creates the encrypted header and then the user maps the volume.
     debug "create Encrypted Data Partition with tcplay "
