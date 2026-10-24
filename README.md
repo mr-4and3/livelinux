@@ -7,6 +7,7 @@ The active workflow is centered on the scripts in the repository root:
 - `install.sh` — installs host dependencies
 - `st-iso.sh` — builds and customizes the ISO
 - `st-usb.sh` — deploys the ISO to a USB stick
+- `st-qemu-chroot.sh` — boots the extracted chroot directly in QEMU
 
 ## What the project does
 
@@ -123,6 +124,27 @@ The full workflow can also be run as a single command:
 ```bash
 sudo ./st-iso.sh all
 ```
+
+## Boot the chroot directly in QEMU
+
+After the ISO has been extracted and customized, you can test `work/chroot`
+directly without rebuilding or booting the ISO:
+
+```bash
+sudo ./st-qemu-chroot.sh --workdir /work
+```
+
+The script copies the kernel and live initramfs from `work/image/antiX` into
+`work/qemu-direct`, adds the matching 9p kernel modules, and replaces the
+copied initramfs entry point with one that mounts `work/chroot` as the guest
+root filesystem. The original initramfs and chroot are not rebuilt or replaced.
+Use `--prepare-only` to create the QEMU files without starting the VM.
+The host needs `cpio`, `unmkinitramfs`, `modinfo`, `modprobe`, and QEMU.
+
+The guest accesses the host chroot read/write over 9p, so changes made in the
+VM also affect `work/chroot`. The live-system startup performed by the original
+initramfs is bypassed; this is a direct root-filesystem boot for testing, not an
+equivalent boot of the finished live ISO.
 
 The script supports these commands:
 
