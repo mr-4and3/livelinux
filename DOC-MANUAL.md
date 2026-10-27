@@ -51,6 +51,7 @@ The tooling used to create the USB stick is:
 | `st-iso.sh` | Builds the custom live ISO from the source antiX image and applies the live-system customizations. | `--iso`<br>`--workdir`<br>`--iso-output`<br>`--customize-script`<br>`--passwd-script` | `system-check`<br>`clean`<br> `prepare`<br>`extract`<br>`customize`<br>`shell`<br>`passwd`<br>`make-iso`<br>`all` |
 | `st-usb.sh` | Writes the generated ISO to a USB drive and creates the Linux, encrypted data, and optional unencrypted data partitions. | `--iso`,<br>`--usb-drive`<br>`--linux-size`<br>`--encrypted-size`<br>`--none-encrypted-size`<br>`--sizes` | `system_check`<br>`list-sticks`<br>`parted`<br>`format`<br>`update-linux`<br>`encrypt`<br>`format-data`<br>`all` |
 | `st-test-iso.sh` | Starts the generated ISO in QEMU to test booting in a virtual machine. | ISO path as the first argument (default: `./custom-linux.iso`) | none; executes immediately with the ISO file |
+| `st-qemu-chroot.sh` | Boots the extracted chroot directly in QEMU using the matching kernel and an adapted copy of the live initramfs. | `--workdir`<br>`--prepare-only` | none; prepares the initramfs and starts QEMU |
 | `st-test-usb.sh` | Tests a USB device by booting it in QEMU with UEFI firmware. | `--usb-device <device_path>` | none; executes immediately with the target USB device |
 | `st-crypt.sh` | Opens and closes the encrypted USB data partition for normal file access. | `-d/--device`<br> `-m/--mapping`<br> `-p/--mountpoint` | `open`<br> `close` |
 

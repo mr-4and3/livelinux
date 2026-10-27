@@ -1,5 +1,28 @@
 #!/bin/bash
-# common.sh - Common functions for Linux ISO customization scripts
+# Copyright (c) 2026 mr_4and3
+#
+# This file is part of livelinux.
+# It is licensed under the MIT License.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# For more information, see the MIT License: https://opensource.org/licenses/MIT
 
 # Exit on any error and propagate ERR traps into functions
 set -eE
@@ -7,10 +30,9 @@ set -eE
 # Source common functions
 # shellcheck source=common.sh
 # shellcheck disable=SC1091
-source common.sh
-# shellcheck source=install.sh
 # shellcheck disable=SC1091
-source install.sh
+source "$(dirname "$0")/common.sh"
+
 
 # Usage and main function
 ##############################################################################
@@ -73,7 +95,7 @@ main() {
     PASSWD_SCRIPT="./sh_ext_mx/set_passwd.sh"
     POSITIONAL=()
 
-    check_root
+    ensure_sudo "$@"
     
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
@@ -351,6 +373,9 @@ set_passwd() {
     local PASSWD_SCRIPT=$1
     local CHROOT_DIR="$2"
     header "set passwd for demo user"
+
+    # shellcheck source=sh_ext_mx/set_passwd.sh
+    # shellcheck disable=SC1091
     source "$PASSWD_SCRIPT"
 
     ensure_workdirs "$WORK_DIR" "$CHROOT_DIR" "$IMAGE_DIR"

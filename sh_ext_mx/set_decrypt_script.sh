@@ -28,6 +28,8 @@ set_decrypt_script() {
         return 1
     fi
 
+    sudo mkdir -p "$CHROOT_DIR/usr/local/lib/livelinux"
+    sudo cp "$SCRIPT_DIR/../common.sh" "$CHROOT_DIR/usr/local/lib/livelinux/common.sh"
     sudo cp "$SCRIPT_DIR/../sh_ext_all/scripts/st-crypt.sh" "$CHROOT_DIR/usr/local/bin/st-crypt.sh"
     sudo chmod +x "$CHROOT_DIR/usr/local/bin/st-crypt.sh"
 

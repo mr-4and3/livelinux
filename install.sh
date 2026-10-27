@@ -1,4 +1,28 @@
 #!/bin/bash
+# Copyright (c) 2026 mr_4and3
+#
+# This file is part of livelinux.
+# It is licensed under the MIT License.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# For more information, see the MIT License: https://opensource.org/licenses/MIT
 
 set -u
 
@@ -51,7 +75,7 @@ install_syslinux() {
 
 main_install() {
 
-    ensure_sudo
+    ensure_sudo "$@"
 
     install_package "rsync" "rsync"
     install_package "xorriso" "xorriso"
@@ -69,12 +93,18 @@ main_install() {
     fi
     install_package "syslinux" "syslinux"
     install_package "zenity" "zenity"
+    install_package "virt-viewer" "virt-viewer"
+    install_package "gpg" "gpg"
+    install_package "exfatlabel" "exfatlabel"
+    install_package "mkfs.exfat" "mkfs.exfat"
+    
 
-    sudo usermod -aG kvm "$USER"
+    local username="${SUDO_USER:-$USER}"
+    sudo usermod -aG kvm "$username"
 
     # Check if the user is in the kvm group
-    if ! groups "$USER" | grep -q '\bkvm\b'; then
-        error "User $USER is not in the 'kvm' group. Please log out and log back in for the group change to take effect."
+    if ! groups "$username" | grep -q '\bkvm\b'; then
+        error "User $username is not in the 'kvm' group. Please log out and log back in for the group change to take effect."
     fi  
 }
 

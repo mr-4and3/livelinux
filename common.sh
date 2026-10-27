@@ -1,4 +1,29 @@
 #!/bin/bash
+# Copyright (c) 2026 mr_4and3
+#
+# This file is part of livelinux.
+# It is licensed under the MIT License.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# For more information, see the MIT License: https://opensource.org/licenses/MIT
+
 
 # function to print warning messages in yellow
 warning() {
@@ -6,11 +31,13 @@ warning() {
     logger -t livelinux "WARNING: $*"
 }
 
+# function to print info messages in blue
 debug() {
     printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
     logger -t livelinux "DEBUG: $*"
 }
 
+# function to print error messages in red
 error() {
     local message="${1:-unknown error}"
     local caller_script="${BASH_SOURCE[1]:-${0}}"
@@ -21,10 +48,17 @@ error() {
     logger -t livelinux "ERROR: $message in $caller_script:$caller_line"
 }
 
+# function to print success messages in green
 success() {
     printf '\033[32mSUCCESS: %s\033[0m\n' "$*" >&2
     logger -t livelinux "SUCCESS: $*"
 }
+
+# function to print header messages in bold
+header() {
+    printf "\033[1m* %s\033[0m\n" "$*" >&2
+}
+
 
 # Exit on any error and propagate ERR traps into functions
 error_handler() {
@@ -38,6 +72,7 @@ error_handler() {
     logger -t livelinux "ERROR: command failed with exit code $exit_code: $BASH_COMMAND in $caller_script:$caller_line"
 }
 
+# Trap ERR to call the error_handler function
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         error "This script must be run as root. Please use sudo."
@@ -45,7 +80,7 @@ check_root() {
     fi
 }
 
-# Function to ask for sudo credentials when the script is started without sudo.
+# Authenticate with sudo, then restart the entry-point script as root.
 ensure_sudo() {
     if [[ "$(id -u)" -eq 0 ]]; then
         return 0
@@ -57,7 +92,8 @@ ensure_sudo() {
     fi
 
     if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-        local sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"
+        local sudo_pass
+        sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"
         if [[ -z "$sudo_pass" ]]; then
             printf '%s\n' "sudo password cancelled." >&2
             exit 1
@@ -66,19 +102,21 @@ ensure_sudo() {
             printf '%s\n' "sudo authentication failed." >&2
             exit 1
         }
-        return 0
+    else
+        local sudo_pass=""
+        read -r -s -p "sudo Passwort: " sudo_pass
+        printf '\n'
+        printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
+            printf '%s\n' "sudo authentication failed." >&2
+            exit 1
+        }
     fi
 
-    local sudo_pass=""
-    read -r -s -p "sudo Passwort: " sudo_pass
-    printf '\n'
-    printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
-        printf '%s\n' "sudo authentication failed." >&2
-        exit 1
-    }
+    exec sudo -- "$BASH" "$0" "$@"
 }
 
-
-header() {
-    printf "* %s\n" "$*" >&2
+# Function to quote shell arguments for safe re-execution
+quote_shell_argument() {
+    local value=${1//\'/\'\\\'\'}
+    printf "'%s'" "$value"
 }
