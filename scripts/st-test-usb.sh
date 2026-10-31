@@ -69,7 +69,7 @@ main() {
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --usb-device)
+            --usb-device|--usb-drive)
                 TARGET_DRIVE="$2"
                 shift 2
                 ;;

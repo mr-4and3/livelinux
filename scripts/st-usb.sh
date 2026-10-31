@@ -29,8 +29,13 @@
 
 # Set script to exit immediately if any command fails
 set -eE
-#shellcheck disable=SC1091
-source common.sh
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source common functions
+# shellcheck source=common.sh
+# shellcheck disable=SC1091
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/common.sh"
 
 usage() {
     local ISO_PATH="${1:-./custom-linux.iso}"
@@ -64,12 +69,13 @@ Options:
 Commands (default: all):
   system_check                 Check required commands
   list_sticks                  List disks and ask for a target
-  parted                       part the usb stick
+  parted                       Create partions of the usb stick
   format                       Erase signatures and create a GPT
   update-linux                 Replace only partition 1; keep partition 2
-  encrypt                      encrypt partion 2
-  format_data                  format data partion
-  all                          do all for one usb-stick
+  encrypt                      Encrypt partion 2
+  format_data                  Format data partion
+  all                          Do all for one usb-stick
+  is-safe-stick                Check if the stick is a safe-stick
 
 The script creates:
   Partition 1                  Custom Linux ISO image
@@ -96,15 +102,13 @@ main() {
     # Trap to ensure cleanup on exit
     trap error_handler ERR
 
+    local -a original_args=("$@")
     POSITIONAL=()
+    local TARGET_DRIVE=""
     local LINUX_SIZE_GB=4 # Größe der Linux-Partition in Gigabyte (Rest wird Datenpartition)
     local CRYPTED_PARTITION_SIZE_GB=1 # Größe der verschlüsselten Partition in Gigabyte (0 = Rest des Sticks)
     local NONE_ENCRYPTED_SIZE_GB=1 # Größe der unverschlüsselten Partition in Gigabyte (0 = keine unverschlüsselte Partition)
     local ISO_PATH="./custom-linux.iso" # Pfad zum ISO-Image
-
-    # Check for root privileges
-    ensure_sudo "$@"
-
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -121,7 +125,7 @@ main() {
                     echo "[!] Missing value for --usb-drive." >&2
                     exit 1
                 fi
-                local TARGET_DRIVE="$2"
+                TARGET_DRIVE="$2"
                 shift 2
                 ;;
             --linux-size)
@@ -162,7 +166,7 @@ main() {
                 exit 0
                 ;;
 
-                system_check|list_sticks|list-sticks|parted|format|update-linux|encrypt|format-data|all)
+                system_check|list_sticks|list-sticks|parted|format|update-linux|encrypt|format-data|all|is-safe-stick)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -183,10 +187,18 @@ main() {
 
     STEP=${POSITIONAL[0]:-all}
 
-    if [[ "$STEP" != system_check && "$STEP" != list_sticks && "$EUID" -ne 0 ]]; then
-        echo "[!] Please run the script with sudo!"
-        exit 1
+    if [[ "$STEP" != system_check && "$STEP" != list-sticks && "$EUID" -ne 0 ]]; then
+        if [[ "$STEP" == "is-safe-stick" ]]; then
+            if [[ -z "$TARGET_DRIVE" ]]; then
+                echo "[!] is-safe-stick requires a target disk via --usb-drive." >&2
+                exit 1
+            fi
+            ensure_sudo --usb-drive "$TARGET_DRIVE" is-safe-stick
+        else
+            ensure_sudo "${original_args[@]}"
+        fi
     fi
+
 
     # Execute the selected positional argument (step)
     case "$STEP" in 
@@ -195,10 +207,6 @@ main() {
             ;;
         list-sticks)
             list_sticks 
-            exit 0
-            ;;
-        list_sticks)
-            list_sticks
             exit 0
             ;;
         parted)
@@ -237,6 +245,11 @@ main() {
             fi
 
             all "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
+            ;;
+        is-safe-stick)
+            if ! is_safe_stick "${TARGET_DRIVE:-}"; then
+                exit 1
+            fi
             ;;
         *)
             echo "Unknown step: $STEP"
@@ -364,20 +377,6 @@ system_check() {
     done
 }
 
-#-----------------------------------------------------------------------------
-# Function to install required system packages if they are not already installed
-#-----------------------------------------------------------------------------
-install() {
-    install_veracrypt
-    install_lsblk
-    install_parted
-    install_partprobe
-    install_dd
-    install_wipefs
-    install_blockdev
-    install_findmnt
-    install_pv
-}
 
 # Function to check if the target drive is the same as the system disk
 # $1: Target drive (e.g., /dev/sdb)
@@ -447,17 +446,12 @@ confirm_target_drive() {
 delete_existing_partition_table() {
     local TARGET_DRIVE="$1"
     
-    # check for root privileges (if not, exit with error)
-    check_root
-
     # Delete existing partition table and wipe filesystem signatures
     ##############################################################################
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         list_sticks
         exit 1
     fi
-
-
 
     debug "* delete existing partition table and mounts ==="
     # Unmount partitions, in case of automatic mount
@@ -501,9 +495,6 @@ parted() {
     local LINUX_SIZE_GB="$2"
     local CRYPTED_PARTITION_SIZE_GB="$3"
     local NONE_ENCRYPTED_SIZE_GB="$4"
-
-    # check for root privileges (if not, exit with error)
-    check_root
 
     if [ -z "$TARGET_DRIVE" ] || [ ! -b "$TARGET_DRIVE" ]; then
         list_sticks
@@ -730,6 +721,7 @@ encrypt() {
     return 0
 }
 
+# format the unencrypted data partition as exFAT for unencrypted data storage
 mkfs_exfat_with_label() {
     local label="$1"
     local device="$2"
@@ -772,19 +764,144 @@ format_none_encrypted_partition() {
 list_sticks() {
     # List available drives and prompt user for target USB stick
     debug "* list available usb sticks "
-    echo "--------------------------------------------------------"
 
+    local STICKS
     STICKS=$(lsblk -S -dnpo NAME,TRAN | awk '$2 == "usb" || $2 == "disk" {print $1}' || true)
+    local FOUND_STICKS=()
 
     while IFS= read -r NAME; do
         [ -n "$NAME" ] || continue
         SIZE=$(lsblk -dno SIZE "$NAME")
         MODEL=$(lsblk -dno MODEL "$NAME")
         TRAN=$(lsblk -dno TRAN "$NAME")
-        echo "Name: $NAME, Size: $SIZE, Model: $MODEL, Transport: $TRAN"
+        FOUND_STICKS+=("Name: $NAME, Size: $SIZE, Model: $MODEL, Transport: $TRAN")
     done <<< "$STICKS"
 
+    if [ ${#FOUND_STICKS[@]} -eq 0 ]; then
+        echo "[!] No USB sticks found."
+        echo "Please insert a USB stick and rerun the script."
+        exit 1
+    fi
+
     echo "--------------------------------------------------------"
+
+    echo "Available USB sticks:"
+    for i in "${!FOUND_STICKS[@]}"; do
+        echo "$((i + 1)). ${FOUND_STICKS[$i]}"
+    done
+
+    echo "--------------------------------------------------------"
+}
+
+# Check whether a device has a plausible Safe Stick partition layout.
+# $1: TARGET_DRIVE (e.g., /dev/sdb)
+# tcplay's TrueCrypt-compatible header is not identified by blkid. Without a
+# passphrase, this only checks that no readable plain filesystem is present.
+is_safe_stick() {
+    local TARGET_DRIVE="$1"
+    local root_source root_devices root_device canonical_target canonical_root
+    local partition_list first_type last_type partition_table second_type probe_status
+    local -a partitions=()
+
+    echo "Checking if $TARGET_DRIVE is a Safe Stick..."
+    if [[ -z "$TARGET_DRIVE" || ! -b "$TARGET_DRIVE" ]]; then
+        echo "[!] Provide a valid whole disk with --usb-drive." >&2
+        return 1
+    fi
+
+    if [[ "$(lsblk -ndo TYPE "$TARGET_DRIVE")" != "disk" ]]; then
+        echo "[!] Target must be a whole disk, not a partition: $TARGET_DRIVE" >&2
+        return 1
+    fi
+
+    canonical_target=$(readlink -f -- "$TARGET_DRIVE") || {
+        echo "[!] Cannot resolve target device: $TARGET_DRIVE" >&2
+        return 1
+    }
+    root_source=$(findmnt -rn -o SOURCE /) || {
+        echo "[!] Cannot determine the running system's root device." >&2
+        return 1
+    }
+    root_source=${root_source%%\[*}
+    root_devices=$(lsblk -s -nrpo NAME -- "$root_source" 2>/dev/null) || {
+        echo "[!] Cannot determine the disk containing the running system." >&2
+        return 1
+    }
+    while IFS= read -r root_device; do
+        [[ -b "$root_device" ]] || continue
+        canonical_root=$(readlink -f -- "$root_device") || continue
+        if [[ "$canonical_root" == "$canonical_target" ]]; then
+            echo "[!] Refusing to inspect the disk containing the running system: $TARGET_DRIVE" >&2
+            return 1
+        fi
+    done <<< "$root_devices"
+
+    partition_list=$(lsblk -nrpo NAME,TYPE -- "$TARGET_DRIVE") || {
+        echo "[!] Cannot read the partition table for $TARGET_DRIVE." >&2
+        return 1
+    }
+    mapfile -t partitions < <(awk '$2 == "part" { print $1 }' <<< "$partition_list")
+    if (( ${#partitions[@]} < 2 || ${#partitions[@]} > 3 )); then
+        echo "[!] Expected 2 or 3 partitions on $TARGET_DRIVE; found ${#partitions[@]}." >&2
+        return 1
+    fi
+
+    first_type=$(blkid -p -o value -s TYPE -- "${partitions[0]}" 2>/dev/null) || {
+        echo "[!] Cannot identify the filesystem on ${partitions[0]}." >&2
+        return 1
+    }
+    if [[ "$first_type" != "vfat" ]]; then
+        echo "[!] First partition must use vfat (found: ${first_type:-unknown})." >&2
+        return 1
+    fi
+
+    partition_table=$(command parted -sm -- "$TARGET_DRIVE" print 2>&1) || {
+        echo "[!] Cannot read partition flags for $TARGET_DRIVE:" >&2
+        printf '%s\n' "$partition_table" >&2
+        return 1
+    }
+    if ! awk -F: '
+        $1 == "1" {
+            count = split($NF, flags, ",")
+            for (i = 1; i <= count; i++) {
+                if (flags[i] == "boot") {
+                    found = 1
+                }
+            }
+        }
+        END { exit !found }
+    ' <<< "$partition_table"; then
+        echo "[!] First partition is not marked bootable." >&2
+        return 1
+    fi
+
+    if second_type=$(blkid -p -o value -s TYPE -- "${partitions[1]}" 2>/dev/null); then
+        if [[ -n "$second_type" && "$second_type" != crypto_* ]]; then
+            echo "[!] Second partition has a readable filesystem signature and does not appear encrypted (type: $second_type)." >&2
+            return 1
+        fi
+    else
+        probe_status=$?
+        if (( probe_status != 2 )); then
+            echo "[!] Cannot reliably inspect the second partition (blkid exit code $probe_status)." >&2
+            return 1
+        fi
+    fi
+
+    if (( ${#partitions[@]} == 3 )); then
+        last_type=$(blkid -p -o value -s TYPE -- "${partitions[2]}" 2>/dev/null) || {
+            echo "[!] Cannot identify the filesystem on ${partitions[2]}." >&2
+            return 1
+        }
+        if [[ "$last_type" != "exfat" ]]; then
+            echo "[!] Third partition must be exFAT (found: ${last_type:-unknown})." >&2
+            return 1
+        fi
+    fi
+
+    echo "[+] Safe Stick detected: $TARGET_DRIVE"
+    echo "[!] The partition layout matches; the tcplay volume was not verified."
+    return 0
 }
 
 # Script starts here

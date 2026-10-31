@@ -33,6 +33,9 @@ warning() {
 
 # function to print info messages in blue
 debug() {
+    if [ "${DEBUG:-0}" -eq 0 ]; then
+        return
+    fi
     printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
     logger -t livelinux "DEBUG: $*"
 }
