@@ -8,3 +8,5 @@ egui = "0.28"
 eframe = "0.28"
 portable-pty = "0.9"
 vt100 = "0.16"
+include_dir = "0.7"
+nix = { version = "0.29", features = ["user"] }

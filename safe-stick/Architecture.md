@@ -38,8 +38,8 @@ The interface is split vertically into two primary layers using egui's panel lay
 
 ## 2.1 Top Panel (Configuration & Control)
 
-Managed via a custom tab/swipe selector state switching between two contexts:
-• ISO View: Form fields tracking file paths (Path to ISO, Custom ISO, Work Directory) and operational shell scripts (Customize Script, Password Script). Actions are mapped to trigger-buttons (Extract, Customize, Shell, Make ISO, Clean, Set Password).
+Managed via a custom tab/swipe selector state switching between three contexts:
+• ISO View: Form fields tracking file paths (Path to ISO, Custom ISO, Work Directory) and operational shell scripts (Customize Script, Password Script). The Extract button runs the compile-time embedded scripts using the configured ISO, work directory, and output path. At build time, only Git-tracked files from `scripts/` are embedded; at startup, the complete embedded directory tree is restored to a temporary directory so the shell scripts can use their relative paths and assets.
 • USB View: Fields targeting hardware deployment parameters (USB Device, Linux Partition Size, Encrypted Size, Unencrypted Size). Buttons control device flashing and encryption lifecycles (Make, Update Linux, Open Encrypted, Close Encrypted).
 • About View: Displays the application name and package version from Cargo metadata. Its top panel expands across the full window, with the terminal hidden.
 
@@ -48,6 +48,7 @@ Managed via a custom tab/swipe selector state switching between two contexts:
 A terminal area shown on the ISO and USB tabs, and hidden on the About tab. It shows the active process and accepts keyboard input directly.
 • Output Area: A terminal screen that renders process output and terminal control sequences.
 • Input: There is no separate input line. Click the terminal area to focus it; key presses go directly to the running process's pseudo-terminal. The terminal itself displays typed input when the process has echo enabled, and password prompts can disable echo.
+• Controls: A Clear button clears the displayed terminal and its scrollback without terminating a running process. A native vertical scrollbar appears only when the terminal history exceeds the visible area; mouse-wheel scrolling navigates history.
 • Terminal Backend: Commands run attached to a pseudo-terminal (PTY), so programs can detect an interactive terminal and prompt for input. The Shell button starts an interactive `sh` process; commands can then be entered in that same terminal.
 
 ## 3. Core Component Model
@@ -97,9 +98,10 @@ Because egui operates as an immediate-mode GUI framework executing at high frame
 
 # 4. UI-to-Shell Data Flow
 
-1. Interaction: The user edits a configuration parameter (e.g., path to ISO) and clicks "Extract".
-2. Context Construction: The system reads the required text inputs and shapes a specific OS terminal command string (e.g., xorriso -osirrox on -indev <input> -extract / <output>).
-3. Execution: The application spawns a separate worker process executing this command.
-4. Streaming: A reader thread feeds PTY output to the terminal parser and requests UI repaints.
-5. Input: When the terminal area is focused, keyboard events are sent directly to the active process through the PTY. No permanent input line is shown.
-6. Re-render: The GUI displays the parsed terminal screen, including output and any echoed input.
+1. Interaction: The user edits ISO configuration fields and clicks "Extract".
+2. Context Construction: The application maps configured values to separate `st-iso.sh` arguments and appends the `extract` action.
+3. Preparation: The script manager restores the embedded scripts and assets into a temporary directory, preserving relative paths and dependencies.
+4. Execution: The application starts the selected script through the PTY runner; `sudo` is used when the application is not already running as root.
+5. Streaming: A reader thread feeds PTY output to the terminal parser and requests UI repaints.
+6. Input: When the terminal area is focused, keyboard events are sent directly to the active process through the PTY. No permanent input line is shown.
+7. Re-render: The GUI displays the parsed terminal screen, including output and any echoed input.

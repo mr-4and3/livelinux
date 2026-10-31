@@ -6,7 +6,17 @@
 // portable-pty = "0.9"
 // vt100 = "0.16"
 
+#[macro_export]
+macro_rules! embedded_scripts {
+    () => {
+        include_dir::include_dir!("$OUT_DIR/embedded-scripts")
+    };
+}
+
+mod script_manager;
+
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use script_manager::EmbeddedScriptManager;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
@@ -35,6 +45,8 @@ enum TopTab {
 }
 
 struct ShellGuiApp {
+    script_manager: Arc<EmbeddedScriptManager>,
+
     // Tab State
     current_tab: TopTab,
 
@@ -55,9 +67,10 @@ struct ShellGuiApp {
     console: Arc<Mutex<ConsoleState>>,
 }
 
-impl Default for ShellGuiApp {
-    fn default() -> Self {
+impl ShellGuiApp {
+    fn new(script_manager: Arc<EmbeddedScriptManager>) -> Self {
         Self {
+            script_manager,
             current_tab: TopTab::Iso,
             path_to_iso: String::new(),
             custom_iso: String::new(),
@@ -71,9 +84,7 @@ impl Default for ShellGuiApp {
             console: Arc::new(Mutex::new(ConsoleState::default())),
         }
     }
-}
 
-impl ShellGuiApp {
     fn append_output(&self, text: &str) {
         match self.console.lock() {
             Ok(mut console) => console.parser.process(text.as_bytes()),
@@ -81,14 +92,69 @@ impl ShellGuiApp {
         }
     }
 
+    fn clear_terminal(&self) {
+        match self.console.lock() {
+            Ok(mut console) => {
+                console.parser = vt100::Parser::new(24, 80, 10_000);
+            }
+            Err(error) => eprintln!("Failed to lock console while clearing: {error}"),
+        }
+    }
+
+    fn terminal_lines(&self) -> Result<Vec<String>, String> {
+        let mut console = self
+            .console
+            .lock()
+            .map_err(|error| format!("Failed to lock terminal state: {error}"))?;
+        let screen = console.parser.screen_mut();
+        let previous_scrollback = screen.scrollback();
+        screen.set_scrollback(usize::MAX);
+        let scrollback_len = screen.scrollback();
+        let (rows, cols) = screen.size();
+        let mut lines = Vec::with_capacity(scrollback_len + usize::from(rows));
+
+        for offset in (0..=scrollback_len).rev() {
+            screen.set_scrollback(offset);
+            lines.push(
+                screen
+                    .rows(0, cols)
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end()
+                    .to_owned(),
+            );
+        }
+
+        screen.set_scrollback(0);
+        lines.extend(
+            screen
+                .rows(0, cols)
+                .skip(1)
+                .map(|line| line.trim_end().to_owned()),
+        );
+        screen.set_scrollback(previous_scrollback);
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+
+        Ok(lines)
+    }
+
     fn run_command(&self, ctx: &egui::Context, cmd: &str, args: Vec<&str>) {
+        let display = format!("{} {}", cmd, args.join(" "));
+        let mut command = CommandBuilder::new(cmd);
+        command.args(args);
+        self.run_command_builder(ctx, command, &display);
+    }
+
+    fn run_command_builder(&self, ctx: &egui::Context, command: CommandBuilder, display: &str) {
         match self.console.lock() {
             Ok(mut console) if !console.active => {
                 console.active = true;
                 console.writer = None;
                 console
                     .parser
-                    .process(format!("\r\n$ {} {}\r\n", cmd, args.join(" ")).as_bytes());
+                    .process(format!("\r\n$ {display}\r\n").as_bytes());
             }
             Ok(_) => {
                 self.append_output("\r\nA process is already running.\r\n");
@@ -100,8 +166,6 @@ impl ShellGuiApp {
             }
         }
 
-        let cmd = cmd.to_string();
-        let args: Vec<String> = args.into_iter().map(|s| s.to_string()).collect();
         let console = Arc::clone(&self.console);
         let ctx = ctx.clone();
 
@@ -124,8 +188,6 @@ impl ShellGuiApp {
                 }
             };
 
-            let mut command = CommandBuilder::new(&cmd);
-            command.args(args);
             let mut child = match pair.slave.spawn_command(command) {
                 Ok(child) => child,
                 Err(error) => {
@@ -371,11 +433,32 @@ impl eframe::App for ShellGuiApp {
 
                         ui.horizontal(|ui| {
                             if ui.button("Extract").clicked() {
-                                self.run_command(
-                                    ctx,
-                                    "echo",
-                                    vec!["Extracting ISO...", &self.path_to_iso],
-                                );
+                                let mut args = Vec::new();
+                                if !self.path_to_iso.is_empty() {
+                                    args.extend(["--iso".to_owned(), self.path_to_iso.clone()]);
+                                }
+                                if !self.work_directory.is_empty() {
+                                    args.extend([
+                                        "--workdir".to_owned(),
+                                        self.work_directory.clone(),
+                                    ]);
+                                }
+                                if !self.custom_iso.is_empty() {
+                                    args.extend([
+                                        "--iso-output".to_owned(),
+                                        self.custom_iso.clone(),
+                                    ]);
+                                }
+                                args.push("extract".to_owned());
+
+                                match self.script_manager.prepare_command("st-iso.sh", &args) {
+                                    Ok(command) => {
+                                        self.run_command_builder(ctx, command, "st-iso.sh extract")
+                                    }
+                                    Err(error) => self.append_output(&format!(
+                                        "\r\nFailed to prepare embedded ISO script: {error}\r\n"
+                                    )),
+                                }
                             }
                             if ui.button("Customize").clicked() {
                                 self.run_command(
@@ -471,85 +554,119 @@ impl eframe::App for ShellGuiApp {
 
         // Bottom Panel: Terminal output and direct keyboard input
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Terminal");
-            let output_text = match self.console.lock() {
-                Ok(console) => console.parser.screen().contents(),
-                Err(error) => format!("Failed to lock terminal state: {error}"),
-            };
+            ui.horizontal(|ui| {
+                ui.heading("Terminal");
+                if ui.button("Clear").clicked() {
+                    self.clear_terminal();
+                }
+            });
+            ui.separator();
 
-            let (rect, response) =
-                ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
-            if response.clicked() {
-                response.request_focus();
-            }
-            ui.painter()
-                .rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 20));
+            let lines = match self.terminal_lines() {
+                Ok(lines) => lines,
+                Err(error) => vec![error],
+            };
             let font = egui::TextStyle::Monospace.resolve(ui.style());
             let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
-            let scroll_delta = if response.hovered() {
-                ui.input(|input| input.smooth_scroll_delta.y)
-            } else {
-                0.0
-            };
-            if scroll_delta != 0.0 {
-                if let Ok(mut console) = self.console.lock() {
-                    let current = console.parser.screen().scrollback() as i32;
-                    let rows = (scroll_delta / row_height.max(1.0)).round() as i32;
-                    console
-                        .parser
-                        .screen_mut()
-                        .set_scrollback((current + rows).max(0) as usize);
-                }
-            }
-            for (row, line) in output_text.lines().enumerate() {
-                ui.painter().text(
-                    egui::pos2(
-                        rect.left() + 8.0,
-                        rect.top() + 8.0 + row as f32 * row_height,
-                    ),
-                    egui::Align2::LEFT_TOP,
-                    line,
-                    font.clone(),
-                    egui::Color32::LIGHT_GRAY,
-                );
-            }
 
-            if response.has_focus() || response.clicked() {
-                let events = ui.input(|input| input.events.clone());
-                for event in events {
-                    match event {
-                        egui::Event::Text(text) => self.send_terminal_input(text.as_bytes()),
-                        egui::Event::Paste(text) => self.send_terminal_input(text.as_bytes()),
-                        egui::Event::Key {
-                            key,
-                            pressed: true,
-                            modifiers,
-                            ..
-                        } => {
-                            if let Some(bytes) = terminal_key_bytes(key, modifiers) {
-                                self.send_terminal_input(&bytes);
+            egui::ScrollArea::vertical()
+                .id_source("terminal_scroll")
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    let content_height =
+                        (lines.len() as f32 * row_height + 16.0).max(ui.available_height());
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), content_height),
+                        egui::Sense::click(),
+                    );
+                    if response.clicked() {
+                        response.request_focus();
+                    }
+                    ui.painter()
+                        .rect_filled(rect, 2.0, egui::Color32::from_rgb(20, 20, 20));
+
+                    for (row, line) in lines.iter().enumerate() {
+                        ui.painter().text(
+                            egui::pos2(
+                                rect.left() + 8.0,
+                                rect.top() + 8.0 + row as f32 * row_height,
+                            ),
+                            egui::Align2::LEFT_TOP,
+                            line,
+                            font.clone(),
+                            egui::Color32::LIGHT_GRAY,
+                        );
+                    }
+
+                    if response.has_focus() || response.clicked() {
+                        let events = ui.input(|input| input.events.clone());
+                        for event in events {
+                            match event {
+                                egui::Event::Text(text) => {
+                                    self.send_terminal_input(text.as_bytes())
+                                }
+                                egui::Event::Paste(text) => {
+                                    self.send_terminal_input(text.as_bytes())
+                                }
+                                egui::Event::Key {
+                                    key,
+                                    pressed: true,
+                                    modifiers,
+                                    ..
+                                } => {
+                                    if let Some(bytes) = terminal_key_bytes(key, modifiers) {
+                                        self.send_terminal_input(&bytes);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
-                }
-            }
+                });
         });
     }
 }
 
-fn main() -> eframe::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let native_options = eframe::NativeOptions::default();
+
+    // Initialisiere the script manager
+    let script_manager = Arc::new(EmbeddedScriptManager::init()?);
+
     eframe::run_native(
-        "Shell Command Frontend",
+        "Safe Stick",
         native_options,
-        Box::new(|_cc| Ok(Box::new(ShellGuiApp::default()))),
-    )
+        Box::new(move |_cc| Ok(Box::new(ShellGuiApp::new(Arc::clone(&script_manager))))),
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_scroll_content_omits_unused_blank_rows_and_clear_keeps_process() {
+        let manager = Arc::new(EmbeddedScriptManager::init().expect("initialize script manager"));
+        let app = ShellGuiApp::new(manager);
+
+        assert_eq!(
+            app.terminal_lines().expect("read terminal lines"),
+            vec!["Console initialized."]
+        );
+
+        {
+            let mut console = app.console.lock().expect("lock console");
+            console.active = true;
+            console.parser.process(b"\r\nnew output");
+        }
+        app.clear_terminal();
+
+        let console = app.console.lock().expect("lock console");
+        assert!(console.active);
+        assert_eq!(console.parser.screen().contents(), "");
+    }
 
     #[test]
     fn pseudo_terminal_accepts_interactive_input() {
