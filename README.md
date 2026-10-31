@@ -197,6 +197,20 @@ This creates a live USB with:
 - Double-check the device path before running any destructive command.
 - Always test the final ISO on the target hardware before relying on it for production use.
 
+## Safe Stick frontend
+
+`safe-stick/` is the Rust GUI frontend planned for the repository's `st-*` scripts. The goal is to make the ISO build, USB deployment, and related workflows available from one application, with configuration fields and an interactive terminal for command output and prompts.
+
+The frontend is under development; not all actions are connected to the scripts yet. The existing shell scripts remain the supported way to run the workflows described above.
+
+Build and run the GUI from the repository root with:
+
+```bash
+cargo run --manifest-path safe-stick/Cargo.toml
+```
+
+The About tab shows the frontend version from `safe-stick/Cargo.toml`.
+
 ## Notes
 
 This repository is meant for building and customizing a live antiX/MX Linux environment. It is not a general-purpose package manager or a documentation project for every old helper script in the `archive/` folder.
