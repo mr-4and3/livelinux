@@ -998,18 +998,22 @@ impl eframe::App for ShellGuiApp {
                         .show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             ui.set_min_height(ui.available_height());
-                            let response = ui.add(
+                            let response = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with("terminal_input_focus"),
+                                egui::Sense::click(),
+                            );
+                            if response.clicked() {
+                                response.request_focus();
+                            }
+                            ui.add(
                                 egui::Label::new(
                                     egui::RichText::new(text)
                                         .monospace()
                                         .color(egui::Color32::LIGHT_GRAY),
                                 )
-                                .selectable(true)
-                                .sense(egui::Sense::click()),
+                                .selectable(false),
                             );
-                            if response.clicked() {
-                                response.request_focus();
-                            }
                             if response.has_focus() {
                                 let events = ui.input(|input| input.events.clone());
                                 for event in events {
