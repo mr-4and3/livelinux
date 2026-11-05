@@ -1,10 +1,10 @@
+use crate::config::expand_home_path;
 use crate::config_manager::{ConfigManager, ConfigValue};
 use crate::script_manager::EmbeddedScriptManager;
 use portable_pty::{ChildKiller, CommandBuilder, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-
 
 // Console state to manage terminal output and input
 struct ConsoleState {
@@ -65,7 +65,10 @@ pub struct ShellGuiApp {
 
     // Infos states
     extract_info: String,
+    customize_info: String,
+    shell_info: String,
     make_iso_info: String,
+    clean_info: String,
     config_message: Option<String>,
 }
 
@@ -88,7 +91,10 @@ impl ShellGuiApp {
             unencrypted_size: String::new(),
             console: Arc::new(Mutex::new(ConsoleState::default())),
             extract_info: String::new(),
+            customize_info: String::new(),
+            shell_info: String::new(),
             make_iso_info: String::new(),
+            clean_info: String::new(),
             config_message: None,
         };
         app.reload_settings_from_config();
@@ -105,11 +111,11 @@ impl ShellGuiApp {
             _ => String::new(),
         };
 
-        self.path_to_iso = string_value("path_to_iso");
-        self.custom_iso = string_value("path_to_custom_iso");
-        self.work_directory = string_value("work_dir");
-        self.customize_script = string_value("customize_script");
-        self.password_script = string_value("passwort_script");
+        self.path_to_iso = expand_home_path(&string_value("path_to_iso"));
+        self.custom_iso = expand_home_path(&string_value("path_to_custom_iso"));
+        self.work_directory = expand_home_path(&string_value("work_dir"));
+        self.customize_script = expand_home_path(&string_value("customize_script"));
+        self.password_script = expand_home_path(&string_value("passwort_script"));
         self.usb_device = string_value("usb_device");
         self.linux_size = integer_value("linux_size_gb");
         self.encrypted_size = integer_value("encrypt_size_gb");
@@ -410,7 +416,7 @@ impl ShellGuiApp {
     }
 }
 
-// Button functions 
+// Extract function
 impl ShellGuiApp {
     // Check if the conditions for extracting the ISO are met, returning true if all conditions are satisfied
     fn check_extract_conditions(&mut self) -> bool {
@@ -427,55 +433,6 @@ impl ShellGuiApp {
         };
 
         self.extract_info.is_empty()
-    }
-
-    // Check if the conditions for making the ISO are met, returning true if all conditions are satisfied
-    fn check_make_iso_conditions(&mut self) -> bool {
-
-        self.make_iso_info = if self.custom_iso.trim().is_empty() {
-            "Custom ISO path is empty.".to_string()
-        } else if self.work_directory.trim().is_empty() {
-            "Work directory is empty.".to_string()
-        } else {
-            match std::fs::metadata(&self.custom_iso) {
-                Ok(metadata) if metadata.is_file() => String::new(),
-                Ok(_) => "Custom ISO path is not a file.".to_string(),
-                Err(_) => "Custom ISO file not found.".to_string(),
-            }
-        };
-
-        self.make_iso_info.is_empty()
-    }
-
-    // Check if the conditions for making the ISO are met, returning true if all conditions are satisfied
-    fn can_make_iso(&self) -> bool {
-        let is_custom_iso = !self.custom_iso.trim().is_empty();
-        let is_work_directory = !self.work_directory.trim().is_empty();
-        let mut ret = is_custom_iso && is_work_directory;
-
-        // check if the iso file exists
-        if let Ok(metadata) = std::fs::metadata(&self.path_to_iso) {
-            ret = ret && metadata.is_file();
-        } else {
-            ret = false;
-        }
-
-        ret
-    }
-
-
-    fn reset_config_to_defaults(&mut self) {
-        match self.config.reset_to_defaults() {
-            Ok(()) => {
-                self.reload_settings_from_config();
-                self.extract_info.clear();
-                self.make_iso_info.clear();
-                self.config_message = Some("Configuration reset to default values.".to_string());
-            }
-            Err(error) => {
-                self.config_message = Some(format!("Failed to reset configuration: {error}"));
-            }
-        }
     }
 
     // Extract the ISO using the specified path and work directory, preparing the command and running it in a separate thread
@@ -508,13 +465,242 @@ impl ShellGuiApp {
                 self.run_command_builder(ctx, command, &display);
             }
             Err(error) => {
+                return Err(format!("Failed to extract ISO script: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+// customize function
+impl ShellGuiApp {
+    fn check_customize_conditions(&mut self) -> bool {
+        self.customize_info = if self.work_directory.trim().is_empty() {
+            "Work directory is empty.".to_string()
+        } else {
+            let work_directory_info = match std::fs::metadata(&self.work_directory) {
+                Ok(metadata) if metadata.is_dir() => String::new(),
+                Ok(_) => "Work directory path is not a directory.".to_string(),
+                Err(_) => "Work directory not found.".to_string(),
+            };
+
+            if !work_directory_info.is_empty() {
+                work_directory_info
+            } else if !self.customize_script.trim().is_empty() {
+                match std::fs::metadata(&self.customize_script) {
+                    Ok(metadata) if metadata.is_file() => String::new(),
+                    Ok(_) => "Customize script path is not a file.".to_string(),
+                    Err(_) => "Customize script file not found.".to_string(),
+                }
+            } else {
+                String::new()
+            }
+        };
+        self.customize_info.is_empty()
+    }
+
+    fn customize_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        if !self.check_customize_conditions() {
+            return Err(self.customize_info.clone());
+        }
+
+        let mut args = Vec::new();
+        if !self.work_directory.is_empty() {
+            args.extend(["--workdir".to_owned(), self.work_directory.clone()]);
+        }
+        if !self.customize_script.is_empty() {
+            args.extend([
+                "--customize-script".to_owned(),
+                self.customize_script.clone(),
+            ]);
+        }
+
+        args.push("customize".to_owned());
+
+        let display = std::iter::once("st-iso.sh".to_owned())
+            .chain(args.iter().map(|arg| format_command_argument(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        match self.script_manager.prepare_command("st-iso.sh", &args) {
+            Ok(command) => {
+                self.run_command_builder(ctx, command, &display);
+            }
+            Err(error) => {
+                return Err(format!("Failed to start customize script: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+// shell function
+impl ShellGuiApp {
+    fn check_shell_conditions(&mut self) -> bool {
+        self.shell_info = if self.work_directory.trim().is_empty() {
+            "Work directory is empty.".to_string()
+        } else {
+            let work_directory_info = match std::fs::metadata(&self.work_directory) {
+                Ok(metadata) if metadata.is_dir() => String::new(),
+                Ok(_) => "Work directory path is not a directory.".to_string(),
+                Err(_) => "Work directory not found.".to_string(),
+            };
+
+            if !work_directory_info.is_empty() {
+                work_directory_info
+            } else {
+                String::new()
+            }
+        };
+        self.shell_info.is_empty()
+    }
+
+    fn shell_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        if !self.check_shell_conditions() {
+            return Err(self.shell_info.clone());
+        }
+
+        let mut args = Vec::new();
+        if !self.work_directory.is_empty() {
+            args.extend(["--workdir".to_owned(), self.work_directory.clone()]);
+        }
+
+        args.push("shell".to_owned());
+
+        let display = std::iter::once("st-iso.sh".to_owned())
+            .chain(args.iter().map(|arg| format_command_argument(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        match self.script_manager.prepare_command("st-iso.sh", &args) {
+            Ok(command) => {
+                self.run_command_builder(ctx, command, &display);
+            }
+            Err(error) => {
+                return Err(format!("Failed to start shell script: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+// Make ISO function
+impl ShellGuiApp {
+    // Check if the conditions for making the ISO are met, returning true if all conditions are satisfied
+    fn check_make_iso_conditions(&mut self) -> bool {
+        self.make_iso_info = if self.custom_iso.trim().is_empty() {
+            "Custom ISO path is empty.".to_string()
+        } else if self.work_directory.trim().is_empty() {
+            "Work directory is empty.".to_string()
+        } else {
+            match std::fs::metadata(&self.custom_iso) {
+                Ok(metadata) if metadata.is_file() => String::new(),
+                Ok(_) => "Custom ISO path is not a file.".to_string(),
+                Err(_) => "Custom ISO file not found.".to_string(),
+            }
+        };
+
+        self.make_iso_info.is_empty()
+    }
+
+    fn make_iso_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        if !self.check_make_iso_conditions() {
+            return Err(self.make_iso_info.clone());
+        }
+
+        let mut args = Vec::new();
+        if !self.custom_iso.is_empty() {
+            args.extend(["--iso-output".to_owned(), self.custom_iso.clone()]);
+        }
+
+        if !self.work_directory.is_empty() {
+            args.extend(["--workdir".to_owned(), self.work_directory.clone()]);
+        }
+
+        args.push("make-iso".to_owned());
+
+        let display = std::iter::once("st-iso.sh".to_owned())
+            .chain(args.iter().map(|arg| format_command_argument(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        match self.script_manager.prepare_command("st-iso.sh", &args) {
+            Ok(command) => {
+                self.run_command_builder(ctx, command, &display);
+            }
+            Err(error) => {
                 return Err(format!("Failed to prepare embedded ISO script: {error}"));
             }
         }
         Ok(())
     }
+}
 
+// clean function
+impl ShellGuiApp {
+    fn check_clean_conditions(&mut self) -> bool {
+        self.clean_info = if self.work_directory.trim().is_empty() {
+            "Work directory is empty.".to_string()
+        } else {
+            let work_directory_info = match std::fs::metadata(&self.work_directory) {
+                Ok(metadata) if metadata.is_dir() => String::new(),
+                Ok(_) => "Work directory path is not a directory.".to_string(),
+                Err(_) => "Work directory not found.".to_string(),
+            };
 
+            if !work_directory_info.is_empty() {
+                work_directory_info
+            } else {
+                String::new()
+            }
+        };
+        self.clean_info.is_empty()
+    }
+
+    fn clean_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        if !self.check_clean_conditions() {
+            return Err(self.clean_info.clone());
+        }
+
+        let mut args = Vec::new();
+        if !self.work_directory.is_empty() {
+            args.extend(["--workdir".to_owned(), self.work_directory.clone()]);
+        }
+
+        args.push("clean".to_owned());
+
+        let display = std::iter::once("st-iso.sh".to_owned())
+            .chain(args.iter().map(|arg| format_command_argument(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        match self.script_manager.prepare_command("st-iso.sh", &args) {
+            Ok(command) => {
+                self.run_command_builder(ctx, command, &display);
+            }
+            Err(error) => {
+                return Err(format!("Failed to start clean script: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+// Reset configuration to default values
+impl ShellGuiApp {
+    fn reset_config_to_defaults(&mut self) {
+        match self.config.reset_to_defaults() {
+            Ok(()) => {
+                self.reload_settings_from_config();
+                self.extract_info.clear();
+                self.make_iso_info.clear();
+                self.config_message = Some("Configuration reset to default values.".to_string());
+            }
+            Err(error) => {
+                self.config_message = Some(format!("Failed to reset configuration: {error}"));
+            }
+        }
+    }
 }
 
 fn format_command_argument(argument: &str) -> String {
@@ -618,56 +804,85 @@ impl eframe::App for ShellGuiApp {
                                 .show(ui, |ui| {
                                     path_input(ui, "Path to ISO:", &mut self.path_to_iso, false);
                                     path_input(ui, "Custom ISO:", &mut self.custom_iso, false);
-                                    path_input(ui, "Work Directory:", &mut self.work_directory, true);
-                                    path_input(ui, "Customize Script:", &mut self.customize_script, false,);
-                                    path_input(ui, "Password Script:", &mut self.password_script, false,);
+                                    path_input(
+                                        ui,
+                                        "Work Directory:",
+                                        &mut self.work_directory,
+                                        true,
+                                    );
+                                    path_input(
+                                        ui,
+                                        "Customize Script:",
+                                        &mut self.customize_script,
+                                        false,
+                                    );
+                                    path_input(
+                                        ui,
+                                        "Password Script:",
+                                        &mut self.password_script,
+                                        false,
+                                    );
                                 });
 
                             ui.add_space(15.0);
 
                             ui.horizontal(|ui| {
-                                let can_extract = self.check_extract_conditions();
+                                let check_extract = self.check_extract_conditions();
                                 let extract_button = ui
-                                    .add_enabled(can_extract, egui::Button::new("Extract"))
+                                    .add_enabled(check_extract, egui::Button::new("Extract"))
                                     .on_disabled_hover_text(self.extract_info.clone());
 
+                                // Handle button clicks for extracting, customizing, and shell operations
                                 if extract_button.clicked() {
                                     if let Err(error) = self.extract_function(ctx) {
                                         self.append_output(&format!("\r\n{error}\r\n"));
                                     }
                                 }
-                                if ui.button("Customize").clicked() {
-                                    self.run_command(
-                                        ctx,
-                                        "echo",
-                                        vec!["Running customize script...", &self.customize_script],
-                                    );
-                                }
-                                if ui.button("Shell").clicked() {
-                                    self.run_command(ctx, "sh", vec!["-i"]);
+
+                                let check_customize = self.check_customize_conditions();
+                                let customize_button = ui
+                                    .add_enabled(check_customize, egui::Button::new("Customize"))
+                                    .on_disabled_hover_text(self.customize_info.clone());
+
+                                if customize_button.clicked() {
+                                    if let Err(error) = self.customize_function(ctx) {
+                                        self.append_output(&format!("\r\n{error}\r\n"));
+                                    }
                                 }
 
-                                let check_make_iso = self.check_make_iso_conditions(); 
+                                let check_shell = self.check_shell_conditions();
+                                let shell_button = ui
+                                    .add_enabled(check_shell, egui::Button::new("Shell"))
+                                    .on_disabled_hover_text(self.shell_info.clone());
+
+                                if shell_button.clicked() {
+                                    if let Err(error) = self.shell_function(ctx) {
+                                        self.append_output(&format!("\r\n{error}\r\n"));
+                                    }
+                                }
+
+                                let check_make_iso = self.check_make_iso_conditions();
                                 let make_iso_button = ui
                                     .add_enabled(check_make_iso, egui::Button::new("Make ISO"))
                                     .on_disabled_hover_text(self.make_iso_info.clone());
 
-                                
                                 if make_iso_button.clicked() {
-                                    self.run_command(
-                                        ctx,
-                                        "echo",
-                                        vec!["Creating custom ISO at:", &self.custom_iso],
-                                    );
+                                    self.make_iso_function(ctx).unwrap_or_else(|error| {
+                                        self.append_output(&format!("\r\n{error}\r\n"));
+                                    });
                                 }
 
-                                if ui.button("Clean").clicked() {
-                                    self.run_command(
-                                        ctx,
-                                        "echo",
-                                        vec!["Cleaning work directory...", &self.work_directory],
-                                    );
+                                let check_clean = self.check_clean_conditions();
+                                let clean_button = ui
+                                    .add_enabled(check_clean, egui::Button::new("Clean"))
+                                    .on_disabled_hover_text(self.clean_info.clone());
+
+                                if clean_button.clicked() {
+                                    self.clean_function(ctx).unwrap_or_else(|error| {
+                                        self.append_output(&format!("\r\n{error}\r\n"));
+                                    });
                                 }
+
                                 if ui.button("Set Password").clicked() {
                                     self.run_command(
                                         ctx,
@@ -789,7 +1004,8 @@ impl eframe::App for ShellGuiApp {
                                         .monospace()
                                         .color(egui::Color32::LIGHT_GRAY),
                                 )
-                                .selectable(true),
+                                .selectable(true)
+                                .sense(egui::Sense::click()),
                             );
                             if response.clicked() {
                                 response.request_focus();
@@ -816,7 +1032,8 @@ impl eframe::App for ShellGuiApp {
                                             modifiers,
                                             ..
                                         } => {
-                                            if let Some(bytes) = terminal_key_bytes(key, modifiers) {
+                                            if let Some(bytes) = terminal_key_bytes(key, modifiers)
+                                            {
                                                 self.send_terminal_input(&bytes);
                                             }
                                         }
@@ -905,7 +1122,10 @@ fn terminal_key_bytes(key: egui::Key, modifiers: egui::Modifiers) -> Option<Vec<
 fn path_input(ui: &mut egui::Ui, label: &str, value: &mut String, directory: bool) {
     ui.label(label);
     ui.horizontal(|ui| {
-        ui.text_edit_singleline(value);
+        let response = ui.text_edit_singleline(value);
+        if response.lost_focus() {
+            *value = expand_home_path(value);
+        }
         if ui.button("Browse...").clicked() {
             let current_path = Path::new(value);
             let initial_directory = if directory && current_path.is_dir() {
@@ -948,6 +1168,14 @@ fn abort_button(ui: &mut egui::Ui, process_active: bool, active_function: Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_enter_key_sends_carriage_return() {
+        assert_eq!(
+            terminal_key_bytes(egui::Key::Enter, egui::Modifiers::default()),
+            Some(b"\r".to_vec())
+        );
+    }
 
     #[test]
     fn terminal_scroll_content_omits_unused_blank_rows_and_clear_keeps_process() {
