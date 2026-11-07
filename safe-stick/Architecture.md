@@ -9,8 +9,7 @@ Technology Stack
 
 • Language: Rust (Stable)
 • GUI Framework: egui / eframe (Immediate Mode GUI)
-• Process Execution: portable-pty (asynchronous worker threads)
-• Terminal Parsing: vt100
+• Process Execution and Terminal Emulation: `egui_term` with the Alacritty terminal backend
 
 ## 2. UI Layout Architecture
 
@@ -47,9 +46,9 @@ Managed via a custom tab/swipe selector state switching between three contexts:
 
 A terminal area shown on the ISO and USB tabs, and hidden on the About tab. It shows the active process and accepts keyboard input directly.
 • Output Area: A terminal screen that renders process output and terminal control sequences.
-• Input: There is no separate input line. Click the terminal area to focus it; key presses go directly to the running process's pseudo-terminal. The terminal itself displays typed input when the process has echo enabled, and password prompts can disable echo.
-• Controls: A Clear button clears the displayed terminal and its scrollback without terminating a running process. A native vertical scrollbar appears only when the terminal history exceeds the visible area; mouse-wheel scrolling navigates history.
-• Terminal Backend: Commands run attached to a pseudo-terminal (PTY), so programs can detect an interactive terminal and prompt for input. The Shell button starts an interactive `sh` process; commands can then be entered in that same terminal.
+• Input: The `egui_term` widget handles terminal keyboard input, selection, scrolling, resizing, and terminal escape sequences. Password prompts can disable echo as usual.
+• Controls: Clear removes saved terminal sessions after their processes have finished. The Interrupt button sends Ctrl+C to the active PTY process.
+• Terminal Backend: `egui_term` launches each selected command in its own PTY. The most recent ten sessions can be revisited through the session selector.
 
 ## 3. Core Component Model
 
@@ -85,7 +84,7 @@ A terminal area shown on the ISO and USB tabs, and hidden on the About tab. It s
 
 The application is split into modules by responsibility:
 • `src/main.rs`: Declares the modules, initializes the script manager, and starts the `eframe` application.
-• `src/app.rs`: Contains `ShellGuiApp`, the ISO/USB/About views, file-picker helpers, and the interactive PTY terminal implementation.
+• `src/app.rs`: Contains `ShellGuiApp`, the ISO/USB/About views, file-picker helpers, and integration with the `egui_term` terminal widget.
 • `src/script_manager.rs`: Embeds the tracked scripts and restores their directory tree for execution.
 • `src/config.rs`: Defines the global configuration schema, including default values and numeric limits.
 • `src/config_manager.rs`: Defines configuration values and provides validation and persistence logic.
@@ -98,15 +97,15 @@ The global schema is initialized once and cloned when passed to `ConfigManager`.
 Maintains the single source of truth for the continuous UI redraw loop.
 • View state: Tracks whether ISO or USB configurations are being actively modified.
 • String buffers: Holds live, mutable textual allocations matching every input field.
-• Terminal screen: A shared VT100-compatible screen buffer.
-• Active process: Tracks whether a process is running and retains the PTY writer for direct keyboard input.
+• Terminal screens: A bounded history of `egui_term` backends for recent commands.
+• Active process: Tracks the active terminal ID and command until the backend reports its exit.
 
 ## 3.3 Threading & Asynchronous Concurrency
 
 Because egui operates as an immediate-mode GUI framework executing at high frame rates, running a shell command blocking synchronous operations on the main thread would immediately cause the UI to freeze ("Not Responding").
-• Worker Spawning: Each action runs in a background worker thread so shell execution does not block the UI.
-• Streaming: Child processes run on a PTY. A reader thread feeds output into the terminal parser while keyboard events are written directly to the PTY.
-• UI Refresh: Output readers request a repaint when new text arrives.
+• Process and PTY management: `egui_term` owns the PTY, terminal parser, output stream, and terminal input handling.
+• Exit tracking: A small event listener updates the active-process state when the backend reports the process exit.
+• UI Refresh: The terminal backend requests repaints as terminal events arrive.
 
 # 4. UI-to-Shell Data Flow
 
@@ -114,6 +113,6 @@ Because egui operates as an immediate-mode GUI framework executing at high frame
 2. Context Construction: The application maps configured values to separate `st-iso.sh` arguments and appends the `extract` action.
 3. Preparation: The script manager restores the embedded scripts and assets into a temporary directory, preserving relative paths and dependencies.
 4. Execution: The application starts the selected script through the PTY runner; `sudo` is used when the application is not already running as root.
-5. Streaming: A reader thread feeds PTY output to the terminal parser and requests UI repaints.
-6. Input: When the terminal area is focused, keyboard events are sent directly to the active process through the PTY. No permanent input line is shown.
-7. Re-render: The GUI displays the parsed terminal screen, including output and any echoed input.
+5. Terminal setup: The application passes the executable, arguments, and working directory to `egui_term`, which starts the command in its own PTY.
+6. Streaming and input: `egui_term` parses PTY output and forwards terminal input, including keyboard shortcuts and paste.
+7. Process state: The application tracks the backend's exit event; Interrupt sends Ctrl+C through the PTY.

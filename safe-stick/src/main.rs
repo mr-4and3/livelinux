@@ -1,11 +1,4 @@
 // Rust GUI Template for Shell Command Frontend using `egui` and `eframe`
-// To run this, add the following to your Cargo.toml:
-// [dependencies]
-// egui = "0.28"
-// eframe = "0.28"
-// portable-pty = "0.9"
-// vt100 = "0.16"
-
 #[macro_export]
 macro_rules! embedded_scripts {
     () => {

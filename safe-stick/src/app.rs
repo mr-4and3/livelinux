@@ -1,33 +1,35 @@
 use crate::config::expand_home_path;
 use crate::config_manager::{ConfigManager, ConfigValue};
 use crate::script_manager::EmbeddedScriptManager;
-use portable_pty::{ChildKiller, CommandBuilder, PtySize, native_pty_system};
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use egui_term::{BackendCommand, BackendSettings, PtyEvent, TerminalBackend, TerminalView};
+use portable_pty::CommandBuilder;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 
-// Console state to manage terminal output and input
-struct ConsoleState {
-    parser: vt100::Parser,
-    writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
-    active: bool,
-    active_function: Option<String>,
-    killer: Option<Box<dyn ChildKiller + Send + Sync>>,
-    abort_requested: bool,
+static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
+const MAX_TERMINAL_SESSIONS: usize = 10;
+
+struct TerminalSession {
+    id: u64,
+    display: String,
+    backend: TerminalBackend,
 }
 
-// Implement Default for ConsoleState to initialize the terminal parser
+struct ConsoleState {
+    active: bool,
+    active_function: Option<String>,
+    active_terminal_id: Option<u64>,
+    notice: String,
+}
+
 impl Default for ConsoleState {
     fn default() -> Self {
-        let mut parser = vt100::Parser::new(24, 80, 10_000);
-        parser.process(b"Console initialized.\r\n");
         Self {
-            parser,
-            writer: None,
             active: false,
             active_function: None,
-            killer: None,
-            abort_requested: false,
+            active_terminal_id: None,
+            notice: "Console initialized.".to_string(),
         }
     }
 }
@@ -62,6 +64,8 @@ pub struct ShellGuiApp {
 
     // Console / Shell State
     console: Arc<Mutex<ConsoleState>>,
+    terminal_sessions: Vec<TerminalSession>,
+    selected_terminal_id: Option<u64>,
 
     // Infos states
     extract_info: String,
@@ -90,6 +94,8 @@ impl ShellGuiApp {
             encrypted_size: String::new(),
             unencrypted_size: String::new(),
             console: Arc::new(Mutex::new(ConsoleState::default())),
+            terminal_sessions: Vec::new(),
+            selected_terminal_id: None,
             extract_info: String::new(),
             customize_info: String::new(),
             shell_info: String::new(),
@@ -160,66 +166,28 @@ impl ShellGuiApp {
         );
     }
 
-    // Append text to the terminal output, processing it through the vt100 parser
+    // Keep application-level messages visible alongside the terminal widget.
     fn append_output(&self, text: &str) {
         match self.console.lock() {
-            Ok(mut console) => console.parser.process(text.as_bytes()),
+            Ok(mut console) => console.notice.push_str(text),
             Err(error) => eprintln!("Failed to lock console: {error}"),
         }
     }
 
-    // Clear the terminal output by resetting the vt100 parser
-    fn clear_terminal(&self) {
+    fn clear_terminal(&mut self) {
         match self.console.lock() {
-            Ok(mut console) => {
-                console.parser = vt100::Parser::new(24, 80, 10_000);
+            Ok(mut console) if !console.active => {
+                self.terminal_sessions.clear();
+                self.selected_terminal_id = None;
+                console.notice.clear();
             }
+            Ok(_) => {}
             Err(error) => eprintln!("Failed to lock console while clearing: {error}"),
         }
     }
 
-    // Retrieve the current lines of terminal output, including scrollback, and return them as a vector of strings
-    fn terminal_lines(&self) -> Result<Vec<String>, String> {
-        let mut console = self
-            .console
-            .lock()
-            .map_err(|error| format!("Failed to lock terminal state: {error}"))?;
-        let screen = console.parser.screen_mut();
-        let previous_scrollback = screen.scrollback();
-        screen.set_scrollback(usize::MAX);
-        let scrollback_len = screen.scrollback();
-        let (rows, cols) = screen.size();
-        let mut lines = Vec::with_capacity(scrollback_len + usize::from(rows));
-
-        for offset in (0..=scrollback_len).rev() {
-            screen.set_scrollback(offset);
-            lines.push(
-                screen
-                    .rows(0, cols)
-                    .next()
-                    .unwrap_or_default()
-                    .trim_end()
-                    .to_owned(),
-            );
-        }
-
-        screen.set_scrollback(0);
-        lines.extend(
-            screen
-                .rows(0, cols)
-                .skip(1)
-                .map(|line| line.trim_end().to_owned()),
-        );
-        screen.set_scrollback(previous_scrollback);
-        while lines.last().is_some_and(String::is_empty) {
-            lines.pop();
-        }
-
-        Ok(lines)
-    }
-
     // Run a command with the specified arguments, displaying the command in the terminal output
-    fn run_command(&self, ctx: &egui::Context, cmd: &str, args: Vec<&str>) {
+    fn run_command(&mut self, ctx: &egui::Context, cmd: &str, args: Vec<&str>) {
         let display = format!("{} {}", cmd, args.join(" "));
         let mut command = CommandBuilder::new(cmd);
         command.args(args);
@@ -236,22 +204,42 @@ impl ShellGuiApp {
         }
     }
 
-    fn abort_process(&self) {
-        request_process_abort(&self.console);
+    fn interrupt_process(&mut self) {
+        let terminal_id = match self.console.lock() {
+            Ok(console) => console.active_terminal_id,
+            Err(error) => {
+                eprintln!("Failed to read active terminal: {error}");
+                return;
+            }
+        };
+        if let Some(terminal) = self
+            .terminal_sessions
+            .iter_mut()
+            .find(|session| Some(session.id) == terminal_id)
+        {
+            terminal
+                .backend
+                .process_command(BackendCommand::Write(vec![0x03]));
+        }
     }
 
-    // Run a command using a CommandBuilder, handling terminal output and input through a separate thread
-    fn run_command_builder(&self, ctx: &egui::Context, command: CommandBuilder, display: &str) {
+    // Run a command in the terminal backend and track its process exit event.
+    fn run_command_builder(&mut self, ctx: &egui::Context, command: CommandBuilder, display: &str) {
+        let settings = match backend_settings_from_command(command) {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.append_output(&format!(
+                    "\r\nFailed to prepare terminal command: {error}\r\n"
+                ));
+                return;
+            }
+        };
+        let terminal_id = NEXT_TERMINAL_ID.fetch_add(1, Ordering::Relaxed);
+        let (event_sender, event_receiver) = mpsc::channel();
+
         match self.console.lock() {
             Ok(mut console) if !console.active => {
-                console.active = true;
-                console.active_function = Some(display.to_string());
-                console.killer = None;
-                console.abort_requested = false;
-                console.writer = None;
-                console
-                    .parser
-                    .process(format!("\r\n$ {display}\r\n").as_bytes());
+                console.notice = format!("$ {display}\r\n");
             }
             Ok(_) => {
                 self.append_output("\r\nA process is already running.\r\n");
@@ -263,156 +251,87 @@ impl ShellGuiApp {
             }
         }
 
-        let console = Arc::clone(&self.console);
-        let ctx = ctx.clone();
-
-        std::thread::spawn(move || {
-            let pty_system = native_pty_system();
-            let pair = match pty_system.openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            }) {
-                Ok(pair) => pair,
-                Err(error) => {
-                    finish_process(
-                        &console,
-                        &format!("\r\nFailed to open terminal: {error}\r\n"),
-                    );
-                    ctx.request_repaint();
-                    return;
-                }
-            };
-
-            let mut child = match pair.slave.spawn_command(command) {
-                Ok(child) => child,
-                Err(error) => {
-                    finish_process(
-                        &console,
-                        &format!("\r\nFailed to start command: {error}\r\n"),
-                    );
-                    ctx.request_repaint();
-                    return;
-                }
-            };
-            drop(pair.slave);
-
-            let abort_requested = match console.lock() {
-                Ok(mut state) => {
-                    state.killer = Some(child.clone_killer());
-                    state.abort_requested
-                }
-                Err(error) => {
-                    eprintln!("Failed to store process abort handle: {error}");
-                    false
-                }
-            };
-            if abort_requested {
-                request_process_abort(&console);
-            }
-
-            let writer = match pair.master.take_writer() {
-                Ok(writer) => Arc::new(Mutex::new(writer)),
-                Err(error) => {
-                    finish_process(
-                        &console,
-                        &format!("\r\nFailed to open terminal input: {error}\r\n"),
-                    );
-                    ctx.request_repaint();
-                    return;
-                }
-            };
-
-            match console.lock() {
-                Ok(mut state) => state.writer = Some(Arc::clone(&writer)),
-                Err(error) => {
-                    finish_process(
-                        &console,
-                        &format!("\r\nFailed to lock console: {error}\r\n"),
-                    );
-                    ctx.request_repaint();
-                    return;
-                }
-            }
-
-            let mut reader = match pair.master.try_clone_reader() {
-                Ok(reader) => reader,
-                Err(error) => {
-                    finish_process(
-                        &console,
-                        &format!("\r\nFailed to open terminal output: {error}\r\n"),
-                    );
-                    ctx.request_repaint();
-                    return;
-                }
-            };
-            let reader_console = Arc::clone(&console);
-            let reader_ctx = ctx.clone();
-            let reader_thread = std::thread::spawn(move || {
-                let mut buffer = [0; 4096];
-                loop {
-                    match reader.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(bytes_read) => match reader_console.lock() {
-                            Ok(mut state) => state.parser.process(&buffer[..bytes_read]),
-                            Err(error) => {
-                                eprintln!("Failed to lock terminal output: {error}");
-                                break;
-                            }
-                        },
-                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                        Err(error) => {
-                            if let Ok(mut state) = reader_console.lock() {
-                                state.parser.process(
-                                    format!("\r\nFailed to read terminal output: {error}\r\n")
-                                        .as_bytes(),
-                                );
-                            }
-                            break;
-                        }
-                    }
-                    reader_ctx.request_repaint();
-                }
-            });
-
-            let exit_message = match child.wait() {
-                Ok(status) => format!("\r\n[Process exited: {status}]\r\n"),
-                Err(error) => format!("\r\nFailed while waiting for command: {error}\r\n"),
-            };
-            if reader_thread.join().is_err() {
-                finish_process(
-                    &console,
-                    "\r\nTerminal output reader stopped unexpectedly.\r\n",
-                );
-            }
-            finish_process(&console, &exit_message);
-            ctx.request_repaint();
-        });
-    }
-
-    // Send input to the terminal, writing it to the PTY writer if available
-    fn send_terminal_input(&self, input: &[u8]) {
-        let writer = match self.console.lock() {
-            Ok(state) if state.active => state.writer.clone(),
-            Ok(_) => None,
+        let backend = match TerminalBackend::new(terminal_id, ctx.clone(), event_sender, settings) {
+            Ok(backend) => backend,
             Err(error) => {
-                eprintln!("Failed to lock console: {error}");
+                match self.console.lock() {
+                    Ok(mut console) => {
+                        console.notice = format!("\r\nFailed to start command: {error}\r\n");
+                    }
+                    Err(lock_error) => {
+                        eprintln!("Failed to update terminal state: {lock_error}");
+                    }
+                }
                 return;
             }
         };
-        if let Some(writer) = writer {
-            match writer.lock() {
-                Ok(mut writer) => {
-                    if let Err(error) = writer.write_all(input).and_then(|()| writer.flush()) {
-                        self.append_output(&format!(
-                            "\r\nFailed to send input to terminal: {error}\r\n"
-                        ));
-                    }
-                }
-                Err(error) => eprintln!("Failed to lock terminal input: {error}"),
+
+        match self.console.lock() {
+            Ok(mut console) => {
+                console.active = true;
+                console.active_function = Some(display.to_string());
+                console.active_terminal_id = Some(terminal_id);
+            }
+            Err(error) => {
+                eprintln!("Failed to update process state: {error}");
+                return;
             }
         }
+        self.terminal_sessions.push(TerminalSession {
+            id: terminal_id,
+            display: display.to_string(),
+            backend,
+        });
+        self.selected_terminal_id = Some(terminal_id);
+        if self.terminal_sessions.len() > MAX_TERMINAL_SESSIONS {
+            self.terminal_sessions.remove(0);
+        }
+
+        let console = Arc::clone(&self.console);
+        let monitor_context = ctx.clone();
+        std::thread::spawn(move || {
+            loop {
+                match event_receiver.recv() {
+                    Ok((event_id, event)) if event_id == terminal_id => {
+                        if matches!(event, PtyEvent::Exit) {
+                            match console.lock() {
+                                Ok(mut state) if state.active_terminal_id == Some(terminal_id) => {
+                                    state.active = false;
+                                    state.active_function = None;
+                                    state.active_terminal_id = None;
+                                    state.notice.push_str("\r\n[Process finished]\r\n");
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    eprintln!("Failed to update terminal process state: {error}")
+                                }
+                            }
+                            monitor_context.request_repaint();
+                            break;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        match console.lock() {
+                            Ok(mut state) if state.active_terminal_id == Some(terminal_id) => {
+                                state.active = false;
+                                state.active_function = None;
+                                state.active_terminal_id = None;
+                                state.notice.push_str(&format!(
+                                    "\r\nTerminal process events ended unexpectedly: {error}\r\n"
+                                ));
+                            }
+                            Ok(_) => {}
+                            Err(lock_error) => {
+                                eprintln!("Failed to update terminal process state: {lock_error}");
+                            }
+                        }
+                        monitor_context.request_repaint();
+                        break;
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -884,21 +803,19 @@ impl eframe::App for ShellGuiApp {
                                 }
 
                                 if ui.button("Set Password").clicked() {
+                                    let password_script = self.password_script.clone();
                                     self.run_command(
                                         ctx,
                                         "echo",
-                                        vec![
-                                            "Setting password via script...",
-                                            &self.password_script,
-                                        ],
+                                        vec!["Setting password via script...", &password_script],
                                     );
                                 }
                             });
                         });
 
                         ui.horizontal(|ui| {
-                            if abort_button(ui, process_active, active_function.as_deref()) {
-                                self.abort_process();
+                            if interrupt_button(ui, process_active, active_function.as_deref()) {
+                                self.interrupt_process();
                             }
                             if ui
                                 .add_enabled(!process_active, egui::Button::new("Clear"))
@@ -933,17 +850,19 @@ impl eframe::App for ShellGuiApp {
 
                             ui.horizontal(|ui| {
                                 if ui.button("Make").clicked() {
+                                    let usb_device = self.usb_device.clone();
                                     self.run_command(
                                         ctx,
                                         "echo",
-                                        vec!["Writing to USB device:", &self.usb_device],
+                                        vec!["Writing to USB device:", &usb_device],
                                     );
                                 }
                                 if ui.button("Update Linux").clicked() {
+                                    let linux_size = self.linux_size.clone();
                                     self.run_command(
                                         ctx,
                                         "echo",
-                                        vec!["Updating Linux partition size...", &self.linux_size],
+                                        vec!["Updating Linux partition size...", &linux_size],
                                     );
                                 }
                                 if ui.button("Open Encrypted").clicked() {
@@ -964,8 +883,8 @@ impl eframe::App for ShellGuiApp {
                         });
 
                         ui.horizontal(|ui| {
-                            if abort_button(ui, process_active, active_function.as_deref()) {
-                                self.abort_process();
+                            if interrupt_button(ui, process_active, active_function.as_deref()) {
+                                self.interrupt_process();
                             }
                             if ui
                                 .add_enabled(!process_active, egui::Button::new("Clear"))
@@ -979,147 +898,99 @@ impl eframe::App for ShellGuiApp {
                 }
             });
 
-        // Bottom Panel: selectable terminal output and direct keyboard input
+        // Bottom Panel: terminal emulator
         egui::CentralPanel::default().show(ctx, |ui| {
-            let lines = match self.terminal_lines() {
-                Ok(lines) => lines,
-                Err(error) => vec![error],
+            let notice = match self.console.lock() {
+                Ok(console) => console.notice.clone(),
+                Err(error) => format!("Failed to read terminal state: {error}"),
             };
-            let text = lines.join("\n");
-
-            egui::ScrollArea::vertical()
-                .id_source("terminal_scroll")
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgb(20, 20, 20))
+                .inner_margin(8.0)
                 .show(ui, |ui| {
-                    egui::Frame::none()
-                        .fill(egui::Color32::from_rgb(20, 20, 20))
-                        .inner_margin(8.0)
-                        .show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.set_min_height(ui.available_height());
-                            let response = ui.interact(
-                                ui.max_rect(),
-                                ui.id().with("terminal_input_focus"),
-                                egui::Sense::click(),
-                            );
-                            if response.clicked() {
-                                response.request_focus();
-                            }
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(text)
-                                        .monospace()
-                                        .color(egui::Color32::LIGHT_GRAY),
-                                )
-                                .selectable(false),
-                            );
-                            if response.has_focus() {
-                                let events = ui.input(|input| input.events.clone());
-                                for event in events {
-                                    match event {
-                                        egui::Event::Text(text) => {
-                                            self.send_terminal_input(text.as_bytes())
-                                        }
-                                        egui::Event::Paste(text) => {
-                                            self.send_terminal_input(text.as_bytes())
-                                        }
-                                        egui::Event::Key {
-                                            key: egui::Key::C,
-                                            pressed: true,
-                                            modifiers,
-                                            ..
-                                        } if modifiers.ctrl => {}
-                                        egui::Event::Key {
-                                            key,
-                                            pressed: true,
-                                            modifiers,
-                                            ..
-                                        } => {
-                                            if let Some(bytes) = terminal_key_bytes(key, modifiers)
-                                            {
-                                                self.send_terminal_input(&bytes);
-                                            }
-                                        }
-                                        _ => {}
-                                    }
+                    if !notice.is_empty() {
+                        ui.label(
+                            egui::RichText::new(notice)
+                                .monospace()
+                                .color(egui::Color32::LIGHT_GRAY),
+                        );
+                    }
+                    let sessions = self
+                        .terminal_sessions
+                        .iter()
+                        .map(|session| (session.id, session.display.clone()))
+                        .collect::<Vec<_>>();
+                    if !sessions.is_empty() {
+                        let selected_text = sessions
+                            .iter()
+                            .find(|(id, _)| Some(*id) == self.selected_terminal_id)
+                            .map(|(_, display)| display.as_str())
+                            .unwrap_or("Select terminal session");
+                        egui::ComboBox::from_label("Terminal session")
+                            .selected_text(selected_text)
+                            .show_ui(ui, |ui| {
+                                for (id, display) in &sessions {
+                                    ui.selectable_value(
+                                        &mut self.selected_terminal_id,
+                                        Some(*id),
+                                        display,
+                                    );
                                 }
-                            }
-                        });
+                            });
+                    }
+                    let selected_terminal_id = self.selected_terminal_id;
+                    if let Some(terminal) = self
+                        .terminal_sessions
+                        .iter_mut()
+                        .find(|session| Some(session.id) == selected_terminal_id)
+                    {
+                        let view = TerminalView::new(ui, &mut terminal.backend).set_focus(true);
+                        ui.add(view);
+                    } else {
+                        ui.allocate_space(ui.available_size());
+                    }
                 });
         });
     }
 }
 
-// Request to abort the currently running process, if any, by signaling the child process to terminate
-fn request_process_abort(console: &Arc<Mutex<ConsoleState>>) {
-    match console.lock() {
-        Ok(mut state) if state.active => {
-            state.abort_requested = true;
-            let result = if let Some(killer) = state.killer.as_mut() {
-                Some(killer.kill())
-            } else {
-                None
-            };
-
-            match result {
-                Some(Ok(())) => state.parser.process(b"\r\nAbort requested.\r\n"),
-                Some(Err(error)) => state
-                    .parser
-                    .process(format!("\r\nFailed to abort process: {error}\r\n").as_bytes()),
-                None => state
-                    .parser
-                    .process(b"\r\nAbort requested; waiting for process startup.\r\n"),
-            }
-        }
-        Ok(_) => {}
-        Err(error) => eprintln!("Failed to abort process: {error}"),
+fn backend_settings_from_command(command: CommandBuilder) -> Result<BackendSettings, String> {
+    if command.iter_extra_env_as_str().next().is_some() {
+        return Err("custom environment variables are not supported by egui_term".to_string());
     }
+
+    let argv = command
+        .get_argv()
+        .iter()
+        .map(|arg| {
+            arg.to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "command arguments must be valid UTF-8".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if argv.is_empty() {
+        return Err("command has no executable".to_string());
+    }
+
+    let command_line = argv
+        .iter()
+        .map(|argument| shell_quote_argument(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Let the PTY reader consume the final output before its exit event is processed.
+    let shell_script = format!(
+        "{command_line}; status=$?; printf '\\r\\n[Process exited: %s]\\r\\n' \"$status\"; sleep 0.1; exit \"$status\""
+    );
+
+    Ok(BackendSettings {
+        shell: "bash".to_string(),
+        args: vec!["-c".to_string(), shell_script],
+        working_directory: command.get_cwd().map(PathBuf::from),
+    })
 }
 
-// Helper function to finish a process, updating the console state and marking it as inactive
-fn finish_process(console: &Arc<Mutex<ConsoleState>>, message: &str) {
-    match console.lock() {
-        Ok(mut state) => {
-            state.parser.process(message.as_bytes());
-            state.writer = None;
-            state.active = false;
-            state.active_function = None;
-            state.killer = None;
-            state.abort_requested = false;
-        }
-        Err(error) => eprintln!("Failed to update terminal state: {error}"),
-    }
-}
-
-// Convert egui key events to terminal input bytes, handling control key combinations and special keys
-fn terminal_key_bytes(key: egui::Key, modifiers: egui::Modifiers) -> Option<Vec<u8>> {
-    if modifiers.ctrl {
-        return match key {
-            egui::Key::C => Some(vec![0x03]),
-            egui::Key::D => Some(vec![0x04]),
-            egui::Key::Z => Some(vec![0x1a]),
-            egui::Key::L => Some(vec![0x0c]),
-            _ => None,
-        };
-    }
-    let bytes = match key {
-        egui::Key::Enter => b"\r".as_slice(),
-        egui::Key::Tab => b"\t",
-        egui::Key::Backspace => b"\x7f",
-        egui::Key::Escape => b"\x1b",
-        egui::Key::ArrowUp => b"\x1b[A",
-        egui::Key::ArrowDown => b"\x1b[B",
-        egui::Key::ArrowRight => b"\x1b[C",
-        egui::Key::ArrowLeft => b"\x1b[D",
-        egui::Key::Home => b"\x1b[H",
-        egui::Key::End => b"\x1b[F",
-        egui::Key::Delete => b"\x1b[3~",
-        egui::Key::PageUp => b"\x1b[5~",
-        egui::Key::PageDown => b"\x1b[6~",
-        _ => return None,
-    };
-    Some(bytes.to_vec())
+fn shell_quote_argument(argument: &str) -> String {
+    format!("'{}'", argument.replace('\'', "'\\''"))
 }
 
 // Helper function to create a labeled path input field with a "Browse..." button
@@ -1155,13 +1026,16 @@ fn path_input(ui: &mut egui::Ui, label: &str, value: &mut String, directory: boo
     ui.end_row();
 }
 
-// Helper function to create an "Abort" button that is enabled only when a process is active
-fn abort_button(ui: &mut egui::Ui, process_active: bool, active_function: Option<&str>) -> bool {
-    let response = ui.add_enabled(process_active, egui::Button::new("Abort"));
+fn interrupt_button(
+    ui: &mut egui::Ui,
+    process_active: bool,
+    active_function: Option<&str>,
+) -> bool {
+    let response = ui.add_enabled(process_active, egui::Button::new("Interrupt"));
     let response = if process_active {
         response.on_hover_text(format!(
-            "abort: {}",
-            active_function.unwrap_or("unbekannte Funktion")
+            "send Ctrl+C: {}",
+            active_function.unwrap_or("unknown")
         ))
     } else {
         response.on_disabled_hover_text("Gerade läuft kein Prozess.")
@@ -1174,15 +1048,102 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_enter_key_sends_carriage_return() {
+    fn terminal_settings_preserve_command_arguments_and_working_directory() {
+        let mut command = CommandBuilder::new("bash");
+        command.args(["script.sh", "--workdir", "/tmp/work dir"]);
+        command.cwd("/tmp/project");
+
+        let settings = backend_settings_from_command(command).expect("convert command");
+
+        assert_eq!(settings.shell, "bash");
+        assert_eq!(settings.args[0], "-c");
         assert_eq!(
-            terminal_key_bytes(egui::Key::Enter, egui::Modifiers::default()),
-            Some(b"\r".to_vec())
+            settings.args[1],
+            "'bash' 'script.sh' '--workdir' '/tmp/work dir'; status=$?; printf '\\r\\n[Process exited: %s]\\r\\n' \"$status\"; sleep 0.1; exit \"$status\""
+        );
+        assert_eq!(
+            settings.working_directory,
+            Some(PathBuf::from("/tmp/project"))
         );
     }
 
     #[test]
-    fn terminal_scroll_content_omits_unused_blank_rows_and_clear_keeps_process() {
+    fn shell_argument_quoting_preserves_single_quotes() {
+        assert_eq!(shell_quote_argument("it's safe"), "'it'\\''s safe'");
+    }
+
+    #[test]
+    fn terminal_backend_reports_completion_of_a_command() {
+        let (event_sender, event_receiver) = mpsc::channel();
+        let context = egui::Context::default();
+        let mut command = CommandBuilder::new("sh");
+        command.args(["-c", "printf 'terminal-ready\\n'"]);
+        let settings = backend_settings_from_command(command).expect("prepare terminal command");
+        let mut terminal = TerminalBackend::new(1, context.clone(), event_sender, settings)
+            .expect("start terminal command");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut process_finished = false;
+        let mut output_received = false;
+        while !process_finished || !output_received {
+            let _ = context.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let view = TerminalView::new(ui, &mut terminal).set_focus(true);
+                    ui.add(view);
+                });
+            });
+
+            while let Ok((terminal_id, event)) = event_receiver.try_recv() {
+                assert_eq!(terminal_id, 1);
+                process_finished |= matches!(event, PtyEvent::Exit);
+            }
+
+            let output = terminal
+                .sync()
+                .grid
+                .display_iter()
+                .map(|cell| cell.c)
+                .collect::<String>();
+            output_received |=
+                output.contains("terminal-ready") && output.contains("[Process exited: 0]");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "process_finished={process_finished}, output={output}"
+            );
+            if !process_finished || !output_received {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_backend_ctrl_c_interrupts_the_active_command() {
+        let (event_sender, event_receiver) = mpsc::channel();
+        let mut command = CommandBuilder::new("sh");
+        command.args(["-c", "sleep 10"]);
+        let settings = backend_settings_from_command(command).expect("prepare terminal command");
+        let mut terminal =
+            TerminalBackend::new(2, egui::Context::default(), event_sender, settings)
+                .expect("start long-running terminal command");
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        terminal.process_command(BackendCommand::Write(vec![0x03]));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let (terminal_id, event) = event_receiver
+                .recv_timeout(remaining)
+                .expect("receive terminal exit after Ctrl+C");
+            assert_eq!(terminal_id, 2);
+            if matches!(event, PtyEvent::Exit) {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn clear_terminal_does_not_change_active_process_state() {
         let manager = Arc::new(EmbeddedScriptManager::init().expect("initialize script manager"));
         let config_path = std::env::temp_dir().join(format!(
             "safe-stick-test-config-{}-{}.json",
@@ -1191,22 +1152,11 @@ mod tests {
         ));
         let config = ConfigManager::init(&config_path, crate::config::CONFIG_SCHEMA.to_vec());
         std::fs::remove_file(config_path).expect("remove temporary test config");
-        let app = ShellGuiApp::new(manager, config);
-
-        assert_eq!(
-            app.terminal_lines().expect("read terminal lines"),
-            vec!["Console initialized."]
-        );
-
-        {
-            let mut console = app.console.lock().expect("lock console");
-            console.active = true;
-            console.parser.process(b"\r\nnew output");
-        }
+        let mut app = ShellGuiApp::new(manager, config);
+        app.console.lock().expect("lock console").active = true;
         app.clear_terminal();
 
         let console = app.console.lock().expect("lock console");
         assert!(console.active);
-        assert_eq!(console.parser.screen().contents(), "");
     }
 }
