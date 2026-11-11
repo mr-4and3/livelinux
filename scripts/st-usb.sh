@@ -76,6 +76,7 @@ Commands (default: all):
   format_data                  Format data partion
   all                          Do all for one usb-stick
   is-safe-stick                Check if the stick is a safe-stick
+  is-crypt-open                Check if the encrypted partition is open
 
 The script creates:
   Partition 1                  Custom Linux ISO image
@@ -166,7 +167,7 @@ main() {
                 exit 0
                 ;;
 
-                system_check|list_sticks|list-sticks|parted|format|update-linux|encrypt|format-data|all|is-safe-stick)
+                system_check|list_sticks|list-sticks|parted|format|update-linux|encrypt|format-data|all|is-safe-stick|is-crypt-open)
                 POSITIONAL+=("$1")
                 shift
                 ;;
@@ -188,12 +189,12 @@ main() {
     STEP=${POSITIONAL[0]:-all}
 
     if [[ "$STEP" != system_check && "$STEP" != list-sticks && "$EUID" -ne 0 ]]; then
-        if [[ "$STEP" == "is-safe-stick" ]]; then
+        if [[ "$STEP" == "is-safe-stick" || "$STEP" == "is-crypt-open" ]]; then
             if [[ -z "$TARGET_DRIVE" ]]; then
-                echo "[!] is-safe-stick requires a target disk via --usb-drive." >&2
+                echo "[!] $STEP requires a target disk via --usb-drive." >&2
                 exit 1
             fi
-            ensure_sudo --usb-drive "$TARGET_DRIVE" is-safe-stick
+            ensure_sudo --usb-drive "$TARGET_DRIVE" "$STEP"
         else
             ensure_sudo "${original_args[@]}"
         fi
@@ -238,6 +239,16 @@ main() {
         format-data)
             format_none_encrypted_partition "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
             ;;
+        is-safe-stick)
+            if ! is_safe_stick "${TARGET_DRIVE:-}"; then
+                exit 1
+            fi
+            ;;
+        is-crypt-open)
+            if ! is_crypt_open "${TARGET_DRIVE:-}"; then
+                exit 1
+            fi
+            ;;
         all)
             if [[ -z "${TARGET_DRIVE:-}" ]]; then
                 list_sticks
@@ -245,11 +256,6 @@ main() {
             fi
 
             all "$TARGET_DRIVE" "$LINUX_SIZE_GB" "$ISO_PATH" "$CRYPTED_PARTITION_SIZE_GB" "$NONE_ENCRYPTED_SIZE_GB"
-            ;;
-        is-safe-stick)
-            if ! is_safe_stick "${TARGET_DRIVE:-}"; then
-                exit 1
-            fi
             ;;
         *)
             echo "Unknown step: $STEP"
@@ -902,6 +908,35 @@ is_safe_stick() {
     echo "[+] Safe Stick detected: $TARGET_DRIVE"
     echo "[!] The partition layout matches; the tcplay volume was not verified."
     return 0
+}
+
+is_crypt_open() {
+    local TARGET_DRIVE="$1"
+    local mapping="usbdata"
+
+    if [[ -z "$TARGET_DRIVE" || ! -b "$TARGET_DRIVE" ]]; then
+        echo "[!] Provide a valid whole disk with --usb-drive." >&2
+        return 1
+    fi
+
+    if [[ "$TARGET_DRIVE" == *"nvme"* ]]; then
+        PART2="${TARGET_DRIVE}p2"
+    else
+        PART2="${TARGET_DRIVE}2"
+    fi
+
+    if [ ! -b "$PART2" ]; then
+        echo "[!] Second partition not found: $PART2" >&2
+        return 1
+    fi
+
+    if [[ -b "/dev/mapper/$mapping" ]]; then
+        echo "[+] Encrypted partition is currently open."
+        return 0
+    else
+        echo "[-] Encrypted partition is not open."
+        return 1
+    fi
 }
 
 # Script starts here

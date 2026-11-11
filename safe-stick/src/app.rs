@@ -60,6 +60,7 @@ pub struct ShellGuiApp {
     usb_device: String,
     usb_sticks: Vec<UsbStick>,
     is_safe_stick: bool,
+    is_crypt_open: bool,
     linux_size: String,
     encrypted_size: String,
     unencrypted_size: String,
@@ -107,6 +108,7 @@ impl ShellGuiApp {
             usb_device: String::new(),
             usb_sticks: Vec::new(),
             is_safe_stick: false,
+            is_crypt_open: false,
             linux_size: String::new(),
             encrypted_size: String::new(),
             unencrypted_size: String::new(),
@@ -175,7 +177,24 @@ impl ShellGuiApp {
         match self.script_manager.is_safe_stick(&self.usb_device) {
             Ok(true) => {
                 self.is_safe_stick = true;
-                self.usb_device_info = "Selected USB device is a Safe Stick.".to_string();
+                self.is_crypt_open = match self.script_manager.is_crypt_open(&self.usb_device) {
+                    Ok(is_open) => is_open,
+                    Err(error) => {
+                        eprintln!("Error checking encrypted partition status: {error}");
+                        false
+                    }
+                };
+                self.usb_device_info = match self.script_manager.is_crypt_open(&self.usb_device) {
+                    Ok(true) => "Selected USB device is a Safe Stick. Encrypted partition is open."
+                        .to_string(),
+                    Ok(false) => {
+                        "Selected USB device is a Safe Stick. Encrypted partition is not open."
+                            .to_string()
+                    }
+                    Err(error) => format!(
+                        "Selected USB device is a Safe Stick, but checking whether its encrypted partition is open failed: {error}"
+                    ),
+                };
             }
             Ok(false) => {
                 self.usb_device_info = "Selected USB device is not a Safe Stick.".to_string();
@@ -798,8 +817,9 @@ impl ShellGuiApp {
 // opencrypt function
 impl ShellGuiApp {
     fn check_open_crypt_conditions(&mut self) -> bool {
-        self.open_crypted_volume_info = if self.usb_device.is_empty() {
-            "USB device is empty.".to_string()
+        self.open_crypted_volume_info = if self.is_crypt_open {
+            "Encrypted volume is already open.".to_string();
+            return false;
         } else if self.usb_device == KEY_NONE {
             "Invalid USB device.".to_string()
         } else if !self.selected_usb_device_is_available() {
@@ -814,7 +834,7 @@ impl ShellGuiApp {
 
     fn open_crypt_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
         if !self.check_open_crypt_conditions() {
-            return Err(self.update_linux_info.clone());
+            return Err(self.open_crypted_volume_info.clone());
         }
 
         let mut args = Vec::new();
@@ -826,24 +846,77 @@ impl ShellGuiApp {
             ]);
         }
 
-        args.push("encrypt".to_owned());
+        args.push("open".to_owned());
 
-        let display = std::iter::once("st-usb.sh".to_owned())
+        let display = std::iter::once("sh_ext_all/scripts/st-crypt.sh open".to_owned())
             .chain(args.iter().map(|arg| format_command_argument(arg)))
             .collect::<Vec<_>>()
             .join(" ");
 
-        match self.script_manager.prepare_command("st-usb.sh", &args) {
+        match self.script_manager.prepare_command("sh_ext_all/scripts/st-crypt.sh", &args) {
             Ok(command) => {
                 self.run_command_builder(ctx, command, &display);
             }
             Err(error) => {
-                return Err(format!("Failed to start USB script with 'encrypt': {error}"));
+                return Err(format!("Failed to open encrypted volume: {error}"));
             }
         }
         Ok(())
     }
 }
+
+// close_crypt function
+impl ShellGuiApp {
+    fn check_close_crypt_conditions(&mut self) -> bool {
+        self.close_crypted_volume_info = if !self.is_crypt_open {
+            "Encrypted volume is not open.".to_string();
+            return false;
+        } else if self.usb_device == KEY_NONE {
+            "Invalid USB device.".to_string()
+        } else if !self.selected_usb_device_is_available() {
+            "Selected USB device is not currently detected. Refresh the device list."
+                .to_string()
+        } else {
+            String::new()
+        };
+
+        self.close_crypted_volume_info.is_empty()
+    }
+
+    fn close_crypt_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        if !self.check_close_crypt_conditions() {
+            return Err(self.close_crypted_volume_info.clone());
+        }
+
+        let mut args = Vec::new();
+
+        if !self.usb_device.is_empty() {
+            args.extend([
+                "--usb-device".to_owned(),
+                self.usb_device.clone(),
+            ]);
+        }
+
+        args.push("close".to_owned());
+
+        let display = std::iter::once("sh_ext_all/scripts/st-crypt.sh".to_owned())
+            .chain(args.iter().map(|arg| format_command_argument(arg)))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        match self.script_manager.prepare_command("sh_ext_all/scripts/st-crypt.sh", &args) {
+            Ok(command) => {
+                self.run_command_builder(ctx, command, &display);
+            }
+            Err(error) => {
+                return Err(format!("Failed to close encrypted volume: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+
 
 
 // Reset configuration to default values
@@ -1237,13 +1310,15 @@ impl eframe::App for ShellGuiApp {
                                         self.append_output(&format!("\r\n{error}\r\n"));
                                     }
                                 }
-
-                                if ui.button("Close Encrypted").clicked() {
-                                    self.run_command(
-                                        ctx,
-                                        "echo",
-                                        vec!["Locking encrypted container..."],
-                                    );
+                                
+                                let check_close_crypt = self.check_close_crypt_conditions();
+                                let close_crypt_button = ui
+                                    .add_enabled(check_close_crypt, egui::Button::new("Close Encrypted"))
+                                    .on_disabled_hover_text(self.close_crypted_volume_info.clone());
+                                if close_crypt_button.clicked() {
+                                    if let Err(error) = self.close_crypt_function(ctx) {
+                                        self.append_output(&format!("\r\n{error}\r\n"));
+                                    }
                                 }
                             });
                         });

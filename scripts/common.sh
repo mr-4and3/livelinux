@@ -94,6 +94,10 @@ ensure_sudo() {
         exit 1
     fi
 
+    if sudo -n -v >/dev/null 2>&1; then
+        exec sudo -- "$BASH" "$0" "$@"
+    fi
+
     if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
         local sudo_pass
         sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"

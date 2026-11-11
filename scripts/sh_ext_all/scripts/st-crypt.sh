@@ -7,11 +7,12 @@ usage() {
     echo "  -p, --mountpoint   Specify the mount point (default: /mnt/usbdata)"
     echo "  open               Open the encrypted device"
     echo "  close              Close the encrypted device"
+    exit 1
 }
 
 main() {
     if [[ "$(id -u)" -ne 0 ]]; then
-        ensure_sudo
+        ensure_sudo "$@"
     fi
 
     local DEVICE=""
@@ -21,7 +22,7 @@ main() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -d|--device)
+            -d|--device|--usb-device|--usb-drive)
                 DEVICE="$2"
                 shift 2
                 ;;
@@ -238,7 +239,7 @@ resolve_tcplay_bin() {
     return 1
 }
 
-# Function to ask for sudo credentials when the script is started without sudo.
+# Authenticate with sudo, then restart the entry-point script as root.
 ensure_sudo() {
     if [[ "$(id -u)" -eq 0 ]]; then
         return 0
@@ -249,29 +250,32 @@ ensure_sudo() {
         exit 1
     fi
 
-    # If zenity is available and a graphical environment is detected, use it to prompt for the sudo password.
+    if sudo -n -v >/dev/null 2>&1; then
+        exec sudo -- "$BASH" "$0" "$@"
+    fi
+
     if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
         local sudo_pass
         sudo_pass="$(zenity --password --title="sudo" --text="Bitte sudo-Passwort eingeben:" 2>/dev/null || true)"
         if [[ -z "$sudo_pass" ]]; then
-            zenity --error --title="sudo" --text="sudo password cancelled." 2>/dev/null || true
+            printf '%s\n' "sudo password cancelled." >&2
             exit 1
         fi
         printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
-            zenity --error --title="sudo" --text="sudo authentication failed." 2>/dev/null || true
+            printf '%s\n' "sudo authentication failed." >&2
             exit 1
         }
-        return 0
+    else
+        local sudo_pass=""
+        read -r -s -p "sudo Passwort: " sudo_pass
+        printf '\n'
+        printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
+            printf '%s\n' "sudo authentication failed." >&2
+            exit 1
+        }
     fi
-    
-    # If zenity is not available, prompt for the sudo password in the terminal.
-    local sudo_pass=""
-    read -r -s -p "sudo Passwort: " sudo_pass
-    printf '\n'
-    printf '%s\n' "$sudo_pass" | sudo -S -v >/dev/null 2>&1 || {
-        printf '%s\n' "sudo authentication failed." >&2
-        exit 1
-    }
+
+    exec sudo -- "$BASH" "$0" "$@"
 }
 
 # Function to read a passphrase via zenity if available, otherwise use the terminal.
@@ -280,7 +284,7 @@ prompt_for_password() {
     local device="$1"
 
     if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-        if zenity --password --title="USB-Verschlüsselung" --text="Bitte Passwort für $device eingeben:" 2>/dev/null; then
+        if zenity --password --title="USB-Encryption" --text="Bitte Passwort für $device eingeben:" 2>/dev/null; then
             return 0
         fi
     fi

@@ -93,6 +93,22 @@ impl EmbeddedScriptManager {
         )
     }
 
+    pub fn is_crypt_open(&self, device: &str) -> io::Result<bool> {
+        let script = self.temp_dir.join("st-usb.sh");
+        let output = Command::new("bash")
+            .arg(script)
+            .args(["--usb-device", device, "is-crypt-open"])
+            .current_dir(&self.project_dir)
+            .output()?;
+
+        crypt_open_result(
+            output.status.success(),
+            &String::from_utf8_lossy(&output.stdout),
+            &String::from_utf8_lossy(&output.stderr),
+            &output.status.to_string(),
+        )
+    }
+
     pub fn prepare_command(
         &self,
         entry_script_path: &str,
@@ -160,6 +176,53 @@ fn safe_stick_result(
             "no diagnostic output"
         } else {
             details
+        }
+    )))
+}
+
+fn crypt_open_result(
+    status_success: bool,
+    stdout: &str,
+    stderr: &str,
+    status: &str,
+) -> io::Result<bool> {
+    if stdout
+        .lines()
+        .any(|line| line == "[+] Encrypted partition is currently open.")
+    {
+        return if status_success {
+            Ok(true)
+        } else {
+            Err(io::Error::other(format!(
+                "st-usb.sh is-crypt-open returned {status} after reporting an open partition"
+            )))
+        };
+    }
+
+    if stdout
+        .lines()
+        .any(|line| line == "[-] Encrypted partition is not open.")
+    {
+        return if status_success {
+            Err(io::Error::other(format!(
+                "st-usb.sh is-crypt-open returned {status} after reporting a closed partition"
+            )))
+        } else {
+            Ok(false)
+        };
+    }
+
+    let details = [stdout.trim(), stderr.trim()]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(io::Error::other(format!(
+        "st-usb.sh is-crypt-open did not complete ({status}): {}",
+        if details.is_empty() {
+            "no diagnostic output"
+        } else {
+            &details
         }
     )))
 }
@@ -282,6 +345,33 @@ mod tests {
         assert!(error.to_string().contains("First partition must use vfat"));
         assert!(
             safe_stick_result(false, "", "sudo password cancelled.", "exit status: 1").is_err()
+        );
+    }
+
+    #[test]
+    fn crypt_open_result_uses_script_output_and_exit_status() {
+        assert_eq!(
+            crypt_open_result(
+                true,
+                "[+] Encrypted partition is currently open.\n",
+                "",
+                "exit status: 0",
+            )
+            .expect("open partition result"),
+            true
+        );
+        assert_eq!(
+            crypt_open_result(
+                false,
+                "[-] Encrypted partition is not open.\n",
+                "",
+                "exit status: 1",
+            )
+            .expect("closed partition result"),
+            false
+        );
+        assert!(
+            crypt_open_result(false, "", "sudo authentication failed.", "exit status: 1").is_err()
         );
     }
 
