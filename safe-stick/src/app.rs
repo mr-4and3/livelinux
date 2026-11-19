@@ -61,6 +61,8 @@ pub struct ShellGuiApp {
     usb_sticks: Vec<UsbStick>,
     is_safe_stick: bool,
     is_crypt_open: bool,
+    install_required: bool,
+    install_info: String,
     linux_size: String,
     encrypted_size: String,
     unencrypted_size: String,
@@ -97,6 +99,10 @@ pub struct ShellGuiApp {
 impl ShellGuiApp {
     // Constructor to create a new instance of ShellGuiApp with the provided script manager and configuration
     pub fn new(script_manager: Arc<EmbeddedScriptManager>, config: ConfigManager) -> Self {
+        let (install_required, install_info) = match script_manager.check_required_packages() {
+            Ok(()) => (false, "All required packages are installed.".to_string()),
+            Err(error) => (true, error),
+        };
         let mut app = Self {
             script_manager,
             config,
@@ -110,6 +116,8 @@ impl ShellGuiApp {
             usb_sticks: Vec::new(),
             is_safe_stick: false,
             is_crypt_open: false,
+            install_required,
+            install_info,
             linux_size: String::new(),
             encrypted_size: String::new(),
             unencrypted_size: String::new(),
@@ -284,14 +292,6 @@ impl ShellGuiApp {
             Ok(_) => {}
             Err(error) => eprintln!("Failed to lock console while clearing: {error}"),
         }
-    }
-
-    // Run a command with the specified arguments, displaying the command in the terminal output
-    fn run_command(&mut self, ctx: &egui::Context, cmd: &str, args: Vec<&str>) {
-        let display = format!("{} {}", cmd, args.join(" "));
-        let mut command = CommandBuilder::new(cmd);
-        command.args(args);
-        self.run_command_builder(ctx, command, &display);
     }
 
     fn process_status(&self) -> (bool, Option<String>) {
@@ -783,6 +783,21 @@ impl ShellGuiApp {
     }
 }
 
+impl ShellGuiApp {
+    fn install_function(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        let display = "st-install.sh";
+        match self.script_manager.prepare_command("st-install.sh", &[]) {
+            Ok(command) => {
+                self.run_command_builder(ctx, command, display);
+            }
+            Err(error) => {
+                return Err(format!("Failed to start installer: {error}"));
+            }
+        }
+        Ok(())
+    }
+}
+
 // make usb function
 impl ShellGuiApp {
     fn selected_usb_device_is_available(&self) -> bool {
@@ -1126,6 +1141,21 @@ impl eframe::App for ShellGuiApp {
                 ui.separator();
                 ui.heading("Safe Stick");
                 ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                let install_enabled = self.install_required && !process_active;
+                let install_hover_text = if process_active {
+                    "Another process is currently running.".to_string()
+                } else {
+                    self.install_info.clone()
+                };
+                let install_button = ui
+                    .add_enabled(install_enabled, egui::Button::new("Install"))
+                    .on_disabled_hover_text(install_hover_text);
+                if install_button.clicked() {
+                    if let Err(error) = self.install_function(ctx) {
+                        self.append_output(&format!("\r\n{error}\r\n"));
+                    }
+                    self.current_tab = TopTab::Iso;
+                }
                 if ui
                     .add_enabled(!process_active, egui::Button::new("Default"))
                     .clicked()
@@ -1491,14 +1521,24 @@ impl eframe::App for ShellGuiApp {
                         .find(|session| Some(session.id) == selected_terminal_id)
                     {
                         let selected_text = terminal.backend.selectable_content();
-                        let copy_button = ui
-                            .add_enabled(!selected_text.is_empty(), egui::Button::new("Copy"))
-                            .on_disabled_hover_text(
-                                "Select terminal text with the mouse to enable copying.",
-                            );
-                        if copy_button.clicked() {
-                            ctx.copy_text(selected_text);
-                        }
+                        ui.horizontal(|ui| {
+                            let copy_button = ui
+                                .add_enabled(!selected_text.is_empty(), egui::Button::new("Copy"))
+                                .on_disabled_hover_text(
+                                    "Select terminal text with the mouse to enable copying.",
+                                );
+                            if copy_button.clicked() {
+                                ctx.copy_text(selected_text);
+                            }
+
+                            if ui
+                                .button("Paste")
+                                .on_hover_text("Paste clipboard contents into the terminal.")
+                                .clicked()
+                            {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                            }
+                        });
 
                         let view = TerminalView::new(ui, &mut terminal.backend).set_focus(true);
                         ui.add(view);

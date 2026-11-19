@@ -141,7 +141,7 @@ flowchart TD
     Start([Start]) --> Systemcheck["Preflight check:<br/>sudo ./st-iso.sh system-check"]
     Start --> Clean
     Systemcheck --> QReqTool{Required tools available?}
-    QReqTool -- No --> Install["sudo ./install.sh"]
+    QReqTool -- No --> Install["sudo ./scripts/st-install.sh"]
     Install --> Systemcheck
     QReqTool -- Yes --> StartBuild["Start build:<br/>all or individual commands"]
     StartBuild --> Prepare
@@ -197,8 +197,16 @@ sudo ./st-iso.sh system-check
 The script verifies that `sudo`, `rsync`, `xorriso`, and `unsquashfs` are available. It also requires that the command is executed as root. The required packages are normally installed by running:
 
 ```bash
-sudo ./install.sh
+sudo ./scripts/st-install.sh
 ```
+
+To check the required packages without installing them, run:
+
+```bash
+./scripts/st-install.sh --check-packages
+```
+
+The check returns a non-zero status and lists any missing requirements.
 
 ### 2. Clean and prepare the build tree
 

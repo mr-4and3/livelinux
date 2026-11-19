@@ -21,10 +21,14 @@ pub struct UsbStick {
 
 impl EmbeddedScriptManager {
     pub fn init() -> io::Result<Self> {
-        let project_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let repository_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("safe-stick crate must be inside the repository")
             .to_path_buf();
+        let executable_dir = std::env::current_exe()?.parent().map(Path::to_path_buf);
+        let project_dir = executable_dir
+            .filter(|path| path.join("scripts").is_dir())
+            .unwrap_or(repository_dir);
         let temp_dir = create_temp_dir()?;
 
         if let Err(error) = unpack_dir(&SCRIPTS_EMBEDDED, &temp_dir) {
@@ -107,6 +111,36 @@ impl EmbeddedScriptManager {
             &String::from_utf8_lossy(&output.stderr),
             &output.status.to_string(),
         )
+    }
+
+    pub fn check_required_packages(&self) -> Result<(), String> {
+        let output = Command::new("bash")
+            .arg(self.temp_dir.join("st-install.sh"))
+            .arg("--check-packages")
+            .current_dir(&self.project_dir)
+            .output()
+            .map_err(|error| format!("Failed to run st-install.sh --check-packages: {error}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let diagnostics = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        Err(format!(
+            "st-install.sh --check-packages failed ({}): {}",
+            output.status,
+            if diagnostics.is_empty() {
+                "no diagnostic output"
+            } else {
+                diagnostics
+            }
+        ))
     }
 
     pub fn prepare_command(

@@ -62,14 +62,14 @@ impl ConfigManager {
                 .expect("Fehler beim Erstellen der Konfigurationsdatei");
         } else {
             // Datei existiert -> laden und validieren
-            manager.load_and_validate(&default_config);
+            manager.load_and_validate();
         }
 
         manager
     }
 
     /// Lädt die Datei und validiert sie gegen das Schema
-    fn load_and_validate(&mut self, default_config: &HashMap<String, ConfigValue>) {
+    fn load_and_validate(&mut self) {
         let mut file = File::open(&self.file_path).expect("Datei konnte nicht geöffnet werden");
         let mut contents = String::new();
         file.read_to_string(&mut contents).unwrap_or(0);

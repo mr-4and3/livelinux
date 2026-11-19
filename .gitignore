@@ -8,3 +8,4 @@ test_mnt/*
 sh_ext_mx/download/*
 *.log
 safe-stick/target/
+dist/
