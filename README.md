@@ -2,13 +2,13 @@
 
 This repository creates a customized live antiX or MX Linux ISO from a source image, modifies the extracted live system in a chroot, rebuilds the SquashFS payload, and packages the result as a bootable ISO. A second script can write that ISO to a USB drive and prepare encrypted and/or unencrypted data partitions.
 
-The active workflow scripts and their helper scripts are in `scrips/`:
+The active workflow scripts and their helper scripts are in `scripts/`:
 
-- `install.sh` — installs host dependencies (repository root)
-- `scrips/st-iso.sh` — builds and customizes the ISO
-- `scrips/st-usb.sh` — deploys the ISO to a USB stick
-- `scrips/st-qemu-chroot.sh` — boots the extracted chroot directly in QEMU
-- `scrips/sh_ext_mx/` and `scrips/sh_ext_all/` — scripts and assets used to customize the live system
+- `scripts/st-install.sh` — installs host dependencies
+- `scripts/st-iso.sh` — builds and customizes the ISO
+- `scripts/st-usb.sh` — deploys the ISO to a USB stick
+- `scripts/st-qemu-chroot.sh` — boots the extracted chroot directly in QEMU
+- `scripts/sh_ext_mx/` and `scripts/sh_ext_all/` — scripts and assets used to customize the live system
 
 ## What the project does
 
@@ -44,7 +44,15 @@ Required host tools include:
 - `realpath`
 - `mount` / `umount`
 
-The helper script `install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
+The helper script `scripts/st-install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
+
+Check whether the required packages are installed without installing anything:
+
+```bash
+./scripts/st-install.sh --check-packages
+```
+
+The check exits with an error status and lists missing requirements if any are unavailable.
 
 ## Development checks
 
@@ -61,19 +69,19 @@ The setup script installs `pre-commit` if needed, enables the local Git hook, an
 1. Install the required host packages:
 
 ```bash
-sudo ./install.sh
+sudo ./scripts/st-install.sh
 ```
 
 2. Show the available ISO builder commands:
 
 ```bash
-sudo ./scrips/st-iso.sh --help
+sudo ./scripts/st-iso.sh --help
 ```
 
 3. Build a custom ISO from a source image:
 
 ```bash
-sudo ./scrips/st-iso.sh \
+sudo ./scripts/st-iso.sh \
   --iso /path/to/source.iso \
   --workdir ./work \
   --iso-output ./custom-linux.iso \
@@ -83,7 +91,7 @@ sudo ./scrips/st-iso.sh \
 4. Deploy the generated ISO to a USB stick:
 
 ```bash
-sudo ./scrips/st-usb.sh \
+sudo ./scripts/st-usb.sh \
   --usb-drive /dev/sdX \
   --iso ./custom-linux.iso \
   --sizes 4,1,1 \
@@ -99,7 +107,7 @@ The `--sizes` option accepts the format:
 You can also configure each partition size individually:
 
 ```bash
-sudo ./scrips/st-usb.sh \
+sudo ./scripts/st-usb.sh \
   --usb-drive /dev/sdX \
   --iso ./custom-linux.iso \
   --linux-size 4 \
@@ -110,7 +118,7 @@ sudo ./scrips/st-usb.sh \
 
 ## ISO build workflow
 
-The active sequence in `scrips/st-iso.sh` is:
+The active sequence in `scripts/st-iso.sh` is:
 
 ```text
 clean
@@ -123,7 +131,7 @@ make-iso
 The full workflow can also be run as a single command:
 
 ```bash
-sudo ./scrips/st-iso.sh all
+sudo ./scripts/st-iso.sh all
 ```
 
 ## Boot the chroot directly in QEMU
@@ -132,7 +140,7 @@ After the ISO has been extracted and customized, you can test `work/chroot`
 directly without rebuilding or booting the ISO:
 
 ```bash
-sudo ./scrips/st-qemu-chroot.sh --workdir /work
+sudo ./scripts/st-qemu-chroot.sh --workdir /work
 ```
 
 The script copies the kernel and live initramfs from `work/image/antiX` into
@@ -182,7 +190,7 @@ The USB deployment script creates a hybrid USB disk with up to three main partit
 Example:
 
 ```bash
-sudo ./scrips/st-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
+sudo ./scripts/st-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
 ```
 
 This creates a live USB with:

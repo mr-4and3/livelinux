@@ -109,6 +109,36 @@ impl EmbeddedScriptManager {
         )
     }
 
+    pub fn check_required_packages(&self) -> Result<(), String> {
+        let output = Command::new("bash")
+            .arg(self.temp_dir.join("st-install.sh"))
+            .arg("--check-packages")
+            .current_dir(&self.project_dir)
+            .output()
+            .map_err(|error| format!("Failed to run st-install.sh --check-packages: {error}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let diagnostics = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        Err(format!(
+            "st-install.sh --check-packages failed ({}): {}",
+            output.status,
+            if diagnostics.is_empty() {
+                "no diagnostic output"
+            } else {
+                diagnostics
+            }
+        ))
+    }
+
     pub fn prepare_command(
         &self,
         entry_script_path: &str,
