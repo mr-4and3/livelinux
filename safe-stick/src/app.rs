@@ -1521,14 +1521,24 @@ impl eframe::App for ShellGuiApp {
                         .find(|session| Some(session.id) == selected_terminal_id)
                     {
                         let selected_text = terminal.backend.selectable_content();
-                        let copy_button = ui
-                            .add_enabled(!selected_text.is_empty(), egui::Button::new("Copy"))
-                            .on_disabled_hover_text(
-                                "Select terminal text with the mouse to enable copying.",
-                            );
-                        if copy_button.clicked() {
-                            ctx.copy_text(selected_text);
-                        }
+                        ui.horizontal(|ui| {
+                            let copy_button = ui
+                                .add_enabled(!selected_text.is_empty(), egui::Button::new("Copy"))
+                                .on_disabled_hover_text(
+                                    "Select terminal text with the mouse to enable copying.",
+                                );
+                            if copy_button.clicked() {
+                                ctx.copy_text(selected_text);
+                            }
+
+                            if ui
+                                .button("Paste")
+                                .on_hover_text("Paste clipboard contents into the terminal.")
+                                .clicked()
+                            {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                            }
+                        });
 
                         let view = TerminalView::new(ui, &mut terminal.backend).set_focus(true);
                         ui.add(view);
