@@ -29,8 +29,18 @@ source "$(dirname "$0")/common.sh"
 
 # Script usage information
 usage() {
-    echo "Usage: $0 ----usb-device <device_path>"
-    echo "Example: $0 --usb-device /dev/sda"
+    cat <<EOF
+Usage: ${0##*/} --usb-device <device_path> [--qemu-mode MODE]
+
+Options:
+  --usb-device, --usb-drive PATH   USB device to test
+  --qemu-mode MODE                 QEMU mode: static or dynamic (default: static)
+  -h, --help                       Show this help message
+
+Examples:
+  ${0##*/} --usb-device /dev/sda
+  ${0##*/} --usb-device /dev/sda --qemu-mode dynamic
+EOF
 }
 
 # Main function to run the USB stick test   
@@ -64,18 +74,23 @@ main() {
         exit
     fi
 
-    TARGET_DRIVE=""
-    
+    local TARGET_DRIVE=""
+    local QEMU_MODE="static"
+
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --usb-device)
+            --usb-device|--usb-drive)
                 TARGET_DRIVE="$2"
+                shift 2
+                ;;
+            --qemu-mode)
+                QEMU_MODE="$2"
                 shift 2
                 ;;
             --help|-h)
                 usage 
-                exit 0
+                return 0
                 ;;
             *)
                 error "Unknown parameter: $1"
@@ -88,6 +103,10 @@ main() {
     # Check if TARGET_DRIVE is set
     if [ -z "$TARGET_DRIVE" ]; then
         error "No target drive specified."
+    fi
+
+    if [[ "$QEMU_MODE" != "static" && "$QEMU_MODE" != "dynamic" ]]; then
+        error "Invalid QEMU mode: $QEMU_MODE. Expected 'static' or 'dynamic'."
     fi
 
     # Check permissions for the target drive
@@ -107,35 +126,71 @@ main() {
         fi
     fi
         
-    # Prefer a real graphical window when a desktop session exists and a GUI backend is available.
-    QEMU_VGA="std"
+    if [ "$QEMU_MODE" == "dynamic" ]; then
+        run_qemu_dynamic "$TARGET_DRIVE" "$OVMF_FILE"
+    else
+        run_qemu_static "$TARGET_DRIVE" "$OVMF_FILE"
+    fi
+}
+
+run_qemu_dynamic() {
+    local TARGET_DRIVE="$1"
+    local OVMF_FILE="$2"
+    local QEMU_ARGS=(
+        -m 4G
+        -enable-kvm
+        -vga virtio
+        -spice "port=5930,disable-ticketing=on"
+        -device virtio-serial-pci
+        -device "virtserialport,chardev=spicechannel0,name=com.redhat.spice.0"
+        -chardev "spicevmc,id=spicechannel0,name=vdagent"
+        -display spice-app
+        -bios "$OVMF_FILE"
+        -device qemu-xhci
+        -drive "file=$TARGET_DRIVE,if=none,id=usb0,format=raw"
+        -device "usb-storage,drive=usb0"
+        -boot order=c
+    )
+
+    exec qemu-system-x86_64 "${QEMU_ARGS[@]}"
+}
+
+run_qemu_static() {
+    local TARGET_DRIVE="$1"
+    local OVMF_FILE="$2"
+    local QEMU_VGA="std"
+    local QEMU_ARGS=()
+
     if qemu-system-x86_64 -device help 2>/dev/null | grep -qi qxl; then
         QEMU_VGA="qxl"
     fi
 
-    QEMU_DISPLAY="-nographic"
+    QEMU_ARGS=(
+        -enable-kvm
+        -m 4096
+        -vga "$QEMU_VGA"
+        -bios "$OVMF_FILE"
+        -device qemu-xhci
+        -drive "file=$TARGET_DRIVE,if=none,id=usb0,format=raw"
+        -device "usb-storage,drive=usb0"
+        -boot order=c
+    )
+
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         if qemu-system-x86_64 -display help 2>/dev/null | grep -qi 'gtk'; then
-            QEMU_DISPLAY="-display gtk"
+            QEMU_ARGS+=(-display gtk)
         elif qemu-system-x86_64 -display help 2>/dev/null | grep -qi 'sdl'; then
-            QEMU_DISPLAY="-display sdl"
+            QEMU_ARGS+=(-display sdl)
         else
             echo "No graphical QEMU backend available for this desktop session; falling back to console output."
+            QEMU_ARGS+=(-nographic)
         fi
     else
         echo "No desktop session detected; using console output."
+        QEMU_ARGS+=(-nographic)
     fi
 
-    qemu-system-x86_64 \
-        -enable-kvm \
-        -m 4096 \
-        -vga "$QEMU_VGA" \
-        $QEMU_DISPLAY \
-        -bios "$OVMF_FILE" \
-        -device qemu-xhci \
-        -drive file="$TARGET_DRIVE",if=none,id=usb0,format=raw \
-        -device usb-storage,drive=usb0 \
-        -boot order=c
+    exec qemu-system-x86_64 "${QEMU_ARGS[@]}"
 }
 
 # Script error handling

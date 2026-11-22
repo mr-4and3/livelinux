@@ -27,11 +27,13 @@
 # Exit on any error and propagate ERR traps into functions
 set -eE
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 # Source common functions
 # shellcheck source=common.sh
 # shellcheck disable=SC1091
 # shellcheck disable=SC1091
-source "$(dirname "$0")/common.sh"
+source "$SCRIPT_DIR/common.sh"
 
 
 # Usage and main function
@@ -91,8 +93,8 @@ main() {
     CHROOT_DIR="$WORK_DIR/chroot"
     IMAGE_DIR="$WORK_DIR/image"
     ISO_OUTPUT="./custom-linux.iso"
-    CUSTOMIZE_SCRIPT="./sh_ext_mx/customize_tor_browser.sh"
-    PASSWD_SCRIPT="./sh_ext_mx/set_passwd.sh"
+    CUSTOMIZE_SCRIPT="$SCRIPT_DIR/sh_ext_mx/customize_tor_browser.sh"
+    PASSWD_SCRIPT="$SCRIPT_DIR/sh_ext_mx/set_passwd.sh"
     POSITIONAL=()
 
     ensure_sudo "$@"

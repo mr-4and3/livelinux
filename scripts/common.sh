@@ -33,6 +33,9 @@ warning() {
 
 # function to print info messages in blue
 debug() {
+    if [ "${DEBUG:-0}" -eq 0 ]; then
+        return
+    fi
     printf '\033[36mDEBUG: %s\033[0m\n' "$*" >&2
     logger -t livelinux "DEBUG: $*"
 }
@@ -89,6 +92,10 @@ ensure_sudo() {
     if ! command -v sudo >/dev/null 2>&1; then
         printf '%s\n' "sudo is not installed." >&2
         exit 1
+    fi
+
+    if sudo -n -v >/dev/null 2>&1; then
+        exec sudo -- "$BASH" "$0" "$@"
     fi
 
     if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then

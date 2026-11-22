@@ -7,3 +7,5 @@ test_mnt/*
 *.tar.*
 sh_ext_mx/download/*
 *.log
+safe-stick/target/
+dist/

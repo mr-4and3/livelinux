@@ -52,7 +52,7 @@ The tooling used to create the USB stick is:
 | `st-usb.sh` | Writes the generated ISO to a USB drive and creates the Linux, encrypted data, and optional unencrypted data partitions. | `--iso`,<br>`--usb-drive`<br>`--linux-size`<br>`--encrypted-size`<br>`--none-encrypted-size`<br>`--sizes` | `system_check`<br>`list-sticks`<br>`parted`<br>`format`<br>`update-linux`<br>`encrypt`<br>`format-data`<br>`all` |
 | `st-test-iso.sh` | Starts the generated ISO in QEMU to test booting in a virtual machine. | ISO path as the first argument (default: `./custom-linux.iso`) | none; executes immediately with the ISO file |
 | `st-qemu-chroot.sh` | Boots the extracted chroot directly in QEMU using the matching kernel and an adapted copy of the live initramfs. | `--workdir`<br>`--prepare-only` | none; prepares the initramfs and starts QEMU |
-| `st-test-usb.sh` | Tests a USB device by booting it in QEMU with UEFI firmware. | `--usb-device <device_path>` | none; executes immediately with the target USB device |
+| `st-test-usb.sh` | Tests a USB device by booting it in QEMU with UEFI firmware. | `--usb-device <device_path>`<br>`--qemu-mode <MODE>` (static or dynamic; default: `static`) | none; executes immediately with the target USB device |
 | `st-crypt.sh` | Opens and closes the encrypted USB data partition for normal file access. | `-d/--device`<br> `-m/--mapping`<br> `-p/--mountpoint` | `open`<br> `close` |
 
 ## Encryption
@@ -141,7 +141,7 @@ flowchart TD
     Start([Start]) --> Systemcheck["Preflight check:<br/>sudo ./st-iso.sh system-check"]
     Start --> Clean
     Systemcheck --> QReqTool{Required tools available?}
-    QReqTool -- No --> Install["sudo ./install.sh"]
+    QReqTool -- No --> Install["sudo ./scripts/st-install.sh"]
     Install --> Systemcheck
     QReqTool -- Yes --> StartBuild["Start build:<br/>all or individual commands"]
     StartBuild --> Prepare
@@ -197,8 +197,16 @@ sudo ./st-iso.sh system-check
 The script verifies that `sudo`, `rsync`, `xorriso`, and `unsquashfs` are available. It also requires that the command is executed as root. The required packages are normally installed by running:
 
 ```bash
-sudo ./install.sh
+sudo ./scripts/st-install.sh
 ```
+
+To check the required packages without installing them, run:
+
+```bash
+./scripts/st-install.sh --check-packages
+```
+
+The check returns a non-zero status and lists any missing requirements.
 
 ### 2. Clean and prepare the build tree
 

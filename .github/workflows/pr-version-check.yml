@@ -1,0 +1,23 @@
+name: Check PR patch version
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Increment patch version in the CI workspace
+        run: make patch-version
+
+      - name: Verify the Cargo package version
+        shell: bash
+        run: |
+          source version_num.sh
+          grep -Fqx "version = \"$VERSION\"" safe-stick/Cargo.toml

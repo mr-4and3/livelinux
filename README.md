@@ -2,12 +2,13 @@
 
 This repository creates a customized live antiX or MX Linux ISO from a source image, modifies the extracted live system in a chroot, rebuilds the SquashFS payload, and packages the result as a bootable ISO. A second script can write that ISO to a USB drive and prepare encrypted and/or unencrypted data partitions.
 
-The active workflow is centered on the scripts in the repository root:
+The active workflow scripts and their helper scripts are in `scripts/`:
 
-- `install.sh` — installs host dependencies
-- `st-iso.sh` — builds and customizes the ISO
-- `st-usb.sh` — deploys the ISO to a USB stick
-- `st-qemu-chroot.sh` — boots the extracted chroot directly in QEMU
+- `scripts/st-install.sh` — installs host dependencies
+- `scripts/st-iso.sh` — builds and customizes the ISO
+- `scripts/st-usb.sh` — deploys the ISO to a USB stick
+- `scripts/st-qemu-chroot.sh` — boots the extracted chroot directly in QEMU
+- `scripts/sh_ext_mx/` and `scripts/sh_ext_all/` — scripts and assets used to customize the live system
 
 ## What the project does
 
@@ -43,7 +44,15 @@ Required host tools include:
 - `realpath`
 - `mount` / `umount`
 
-The helper script `install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
+The helper script `scripts/st-install.sh` installs the common build dependencies automatically, including `rsync`, `xorriso`, `squashfs-tools`, `tcplay`, and partitioning tools.
+
+Check whether the required packages are installed without installing anything:
+
+```bash
+./scripts/st-install.sh --check-packages
+```
+
+The check exits with an error status and lists missing requirements if any are unavailable.
 
 ## Development checks
 
@@ -60,19 +69,19 @@ The setup script installs `pre-commit` if needed, enables the local Git hook, an
 1. Install the required host packages:
 
 ```bash
-sudo ./install.sh
+sudo ./scripts/st-install.sh
 ```
 
 2. Show the available ISO builder commands:
 
 ```bash
-sudo ./st-iso.sh --help
+sudo ./scripts/st-iso.sh --help
 ```
 
 3. Build a custom ISO from a source image:
 
 ```bash
-sudo ./st-iso.sh \
+sudo ./scripts/st-iso.sh \
   --iso /path/to/source.iso \
   --workdir ./work \
   --iso-output ./custom-linux.iso \
@@ -82,7 +91,7 @@ sudo ./st-iso.sh \
 4. Deploy the generated ISO to a USB stick:
 
 ```bash
-sudo ./st-usb.sh \
+sudo ./scripts/st-usb.sh \
   --usb-drive /dev/sdX \
   --iso ./custom-linux.iso \
   --sizes 4,1,1 \
@@ -98,7 +107,7 @@ The `--sizes` option accepts the format:
 You can also configure each partition size individually:
 
 ```bash
-sudo ./st-usb.sh \
+sudo ./scripts/st-usb.sh \
   --usb-drive /dev/sdX \
   --iso ./custom-linux.iso \
   --linux-size 4 \
@@ -109,7 +118,7 @@ sudo ./st-usb.sh \
 
 ## ISO build workflow
 
-The active sequence in `st-iso.sh` is:
+The active sequence in `scripts/st-iso.sh` is:
 
 ```text
 clean
@@ -122,7 +131,7 @@ make-iso
 The full workflow can also be run as a single command:
 
 ```bash
-sudo ./st-iso.sh all
+sudo ./scripts/st-iso.sh all
 ```
 
 ## Boot the chroot directly in QEMU
@@ -131,7 +140,7 @@ After the ISO has been extracted and customized, you can test `work/chroot`
 directly without rebuilding or booting the ISO:
 
 ```bash
-sudo ./st-qemu-chroot.sh --workdir /work
+sudo ./scripts/st-qemu-chroot.sh --workdir /work
 ```
 
 The script copies the kernel and live initramfs from `work/image/antiX` into
@@ -181,7 +190,7 @@ The USB deployment script creates a hybrid USB disk with up to three main partit
 Example:
 
 ```bash
-sudo ./st-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
+sudo ./scripts/st-usb.sh --usb-drive /dev/sdX --iso ./custom-linux.iso --sizes 15,20,5 all
 ```
 
 This creates a live USB with:
@@ -196,6 +205,38 @@ This creates a live USB with:
 - The script refuses to target the disk containing the running system.
 - Double-check the device path before running any destructive command.
 - Always test the final ISO on the target hardware before relying on it for production use.
+
+## Safe Stick frontend
+
+`safe-stick/` is the Rust GUI frontend planned for the repository's `st-*` scripts. The goal is to make the ISO build, USB deployment, and related workflows available from one application, with configuration fields and an interactive terminal for command output and prompts.
+
+The frontend is under development; the ISO **Extract** action runs the embedded `scripts/st-iso.sh` with the configured ISO, work directory, and output path. At build time, all Git-tracked files under `scripts/` are embedded, and the app restores that directory structure into a temporary directory at startup so the scripts can use their relative paths. Untracked files, such as downloaded build artifacts, are not embedded. Other GUI actions are not all connected yet, so the existing shell scripts remain the supported way to run the remaining workflows described above.
+
+Build and run the GUI from the repository root with:
+
+```bash
+cargo run --manifest-path safe-stick/Cargo.toml
+```
+
+Create a locally unpackable release bundle containing the GUI and tracked scripts with:
+
+```bash
+make release-bundle
+tar -xzf dist/safe-stick-release.tar.gz
+cd safe-stick
+./safe-stick
+```
+
+The bundle runs from its extracted directory and includes the `scripts/` tree,
+`README.md`, and `License.txt`.
+`make release-bundle` requires the `main` branch and a clean Git working tree.
+
+Once the workflow is on the default branch, GitHub Actions runs
+`make patch-version` for pull requests in its temporary runner and checks that
+the generated version matches `safe-stick/Cargo.toml`. The change is not
+committed to the PR branch; the workflow only validates the version bump.
+
+The About tab shows the frontend version from `safe-stick/Cargo.toml`.
 
 ## Notes
 

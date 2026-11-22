@@ -28,13 +28,33 @@ set -u
 
 source "$(dirname "$0")/common.sh"
 
+CHECK_ONLY=0
+MISSING_PACKAGES=()
+
+usage() {
+    cat <<EOF
+Usage: ${0##*/} [OPTIONS]
+
+Options:
+  --check-packages  Check required packages without installing them
+  -h, --help        Show this help message
+EOF
+}
+
 install_package() {
     local package_name="$1"
-    local check_command="${2:-$package_name}"
+    local check_command="${2-$package_name}"
     local check_path="${3:-}"
 
-    if command -v "$check_command" >/dev/null 2>&1 || [[ -n "$check_path" && -e "$check_path" ]]; then
+    if { [[ -n "$check_command" ]] && command -v "$check_command" >/dev/null 2>&1; } ||
+        [[ -n "$check_path" && -e "$check_path" ]]; then
         echo "$package_name is already installed."
+        return 0
+    fi
+
+    if [[ "${CHECK_ONLY:-0}" == 1 ]]; then
+        printf 'Required package or file is missing: %s\n' "$package_name" >&2
+        MISSING_PACKAGES+=("$package_name")
         return 0
     fi
 
@@ -73,10 +93,7 @@ install_syslinux() {
     fi
 }
 
-main_install() {
-
-    ensure_sudo "$@"
-
+install_dependencies() {
     install_package "rsync" "rsync"
     install_package "xorriso" "xorriso"
     install_package "squashfs-tools" "unsquashfs"
@@ -86,10 +103,14 @@ main_install() {
     install_package "coreutils" "dd"
     install_package "qemu-system-x86" "qemu-system-x86_64"
     install_package "qemu-desktop" "qemu-system-x86_64"
-    install_package "edk2-ovmf" "" "/usr/share/edk2/x64/OVMF.4m.fd"
-    install_package "ovmf" "" "/usr/share/OVMF/OVMF_CODE.fd"
-    if command -v pacman >/dev/null 2>&1; then
-        install_package "ovmf" "" "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"
+    if [[ "$CHECK_ONLY" == 1 ]]; then
+        check_ovmf_firmware
+    else
+        install_package "edk2-ovmf" "" "/usr/share/edk2/x64/OVMF.4m.fd"
+        install_package "ovmf" "" "/usr/share/OVMF/OVMF_CODE.fd"
+        if command -v pacman >/dev/null 2>&1; then
+            install_package "ovmf" "" "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"
+        fi
     fi
     install_package "syslinux" "syslinux"
     install_package "zenity" "zenity"
@@ -97,7 +118,45 @@ main_install() {
     install_package "gpg" "gpg"
     install_package "exfatlabel" "exfatlabel"
     install_package "mkfs.exfat" "mkfs.exfat"
-    
+}
+
+check_ovmf_firmware() {
+    local firmware
+    for firmware in \
+        "/usr/share/ovmf/OVMF.fd" \
+        "/usr/share/edk2/x64/OVMF.4m.fd" \
+        "/usr/share/edk2/x64/OVMF.fd" \
+        "/usr/share/OVMF/OVMF_CODE.fd" \
+        "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"; do
+        if [[ -f "$firmware" ]]; then
+            echo "OVMF firmware is installed: $firmware"
+            return 0
+        fi
+    done
+
+    printf 'Required package or file is missing: OVMF firmware\n' >&2
+    MISSING_PACKAGES+=("OVMF firmware")
+}
+
+check_required_packages() {
+    CHECK_ONLY=1
+    MISSING_PACKAGES=()
+
+    echo "Checking required packages..."
+    install_dependencies
+
+    if ((${#MISSING_PACKAGES[@]} > 0)); then
+        printf 'Missing requirements: %s\n' "${MISSING_PACKAGES[*]}" >&2
+        return 1
+    fi
+
+    echo "All required packages are installed."
+    return 0
+}
+
+main_install() {
+    ensure_sudo
+    install_dependencies
 
     local username="${SUDO_USER:-$USER}"
     sudo usermod -aG kvm "$username"
@@ -108,6 +167,33 @@ main_install() {
     fi  
 }
 
+main() {
+    if (($# == 0)); then
+        main_install
+        return
+    fi
+
+    case "$1" in
+        --check-packages)
+            shift
+            if (($# > 0)); then
+                error "--check-packages does not accept additional arguments."
+                usage
+                return 2
+            fi
+            check_required_packages
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage
+            return 2
+            ;;
+    esac
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main_install "$@"
+    main "$@"
 fi
