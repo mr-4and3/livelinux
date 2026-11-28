@@ -334,6 +334,73 @@ sudo ./st-iso.sh \
 
 The `all` command performs the same sequence as `prepare`, `extract`, `customize`, and `make-iso`. The optional `shell` and `passwd` commands are not included in `all`; run them separately when needed.
 
+# Safe Stick GUI
+
+Safe Stick is a Rust desktop application that provides a graphical interface for selected ISO-building and USB-management workflows. It runs the repository's shell scripts and shows their output in an integrated interactive terminal. The GUI complements the command-line scripts; use those scripts directly if you need options that are not exposed in the application.
+
+### Install, build, and run
+
+On Debian-based distributions using `apt-get` (including Debian, Ubuntu, Linux Mint, and MX Linux) or Arch-based distributions using `pacman` (including CachyOS), run the repository's configure script as your regular user. It installs Rust stable with rustup and the native packages needed to build the GUI; `sudo` is used only for system packages:
+
+```bash
+./configure.sh
+```
+
+Build and launch the application from the repository root:
+
+```bash
+cargo build --manifest-path safe-stick/Cargo.toml
+cargo run --manifest-path safe-stick/Cargo.toml
+```
+
+The build embeds Git-tracked files from `scripts/`; keep the scripts tracked by Git for them to be included. When the application starts, it unpacks the embedded scripts into a temporary directory so they can use their relative files.
+
+To create and run a locally unpackable release bundle:
+
+```bash
+make release-bundle
+tar -xzf dist/safe-stick-release.tar.gz
+cd safe-stick
+./safe-stick
+```
+
+The bundle includes the executable, tracked `scripts/` files, `README.md`, and `License.txt`. Creating it requires the `main` branch and a clean Git working tree.
+
+### ISO tab
+
+The ISO tab contains fields for the source ISO, output ISO, work directory, customization script, and password script. Use **Browse...** to choose files or a directory. The embedded customization and password scripts are selected by default; alternative script paths can be entered when needed. Settings are saved in `~/.config/safe-stick/config.json` when the application exits.
+
+The available actions are:
+
+- **Extract** — extracts the source ISO into the work directory.
+- **Customize** — applies the selected customization script to the extracted system.
+- **Shell** — opens an interactive shell in the prepared chroot.
+- **Set Password** — runs the selected password script.
+- **Make ISO** — creates the output ISO from the prepared work tree.
+- **Clean** — cleans the work tree.
+- **Test iso** — starts the selected output ISO in QEMU.
+
+For a complete ISO workflow, provide a valid source ISO and work directory, then run **Extract**, **Customize**, and **Make ISO** in order. **Set Password** is optional and should be run before **Make ISO**. The GUI disables actions when their required paths or workflow state are not valid.
+
+### USB tab
+
+Select **Refresh** to list detected USB devices, then choose the target device. The GUI displays the Linux, encrypted, and unencrypted partition size fields in gigabytes. The available actions are:
+
+- **Make USB** — runs the USB creation workflow for the selected device.
+- **Update Linux** — updates the Linux partition on a Safe Stick.
+- **Open Encrypted** / **Close Encrypted** — opens or closes the selected Safe Stick's encrypted data partition.
+- **Test Usb Stick** — tests the selected USB device in QEMU.
+
+Currently, **Make USB** passes the selected device to the script but does not pass the ISO path or partition sizes from the GUI; the script's defaults are used. To specify a custom ISO or sizes, use `scripts/st-usb.sh` directly and see the command-line examples earlier in this manual.
+
+> **Warning:** **Make USB** erases the selected device and recreates its partitions. Verify the selected device carefully before starting. The GUI checks the device and required inputs, but cannot protect data on a wrongly selected drive.
+
+### Terminal and application settings
+
+The terminal at the bottom displays command output and supports interactive commands and prompts. Use **Interrupt** to stop a running action, **Clear** to clear the terminal, and the terminal session selector to switch between sessions. Copy and paste controls are provided for terminal text. Only one workflow action runs at a time.
+
+The **About** tab displays the application version. **Install** checks and installs the host packages required by the shell workflows; it may request administrator authorization and add the user to the `kvm` group. If the group membership changes, log out and back in for it to take effect. **Default** resets the GUI settings to their initial values.
+
 ## Working directories
 
 The build uses the following folders under the selected work directory (default):
