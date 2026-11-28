@@ -73,3 +73,4 @@ rustup default stable
 
 printf '\n%s\n' "Rust build environment is ready."
 printf '%s\n' "Build the GUI with: cargo build --manifest-path safe-stick/Cargo.toml"
+printf 'To use cargo in this terminal, run: . "%s/.cargo/env"\n' "$HOME"

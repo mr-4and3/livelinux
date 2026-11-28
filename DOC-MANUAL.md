@@ -344,9 +344,10 @@ On Debian-based distributions using `apt-get` (including Debian, Ubuntu, Linux M
 
 ```bash
 ./configure.sh
+. "$HOME/.cargo/env"
 ```
 
-Build and launch the application from the repository root:
+The configure script cannot change the `PATH` of its calling shell. The command above loads Rustup's Cargo path into the current terminal; new shells normally load it from the shell profile automatically. Then build and launch the application from the repository root:
 
 ```bash
 cargo build --manifest-path safe-stick/Cargo.toml
@@ -359,12 +360,12 @@ To create and run a locally unpackable release bundle:
 
 ```bash
 make release-bundle
-tar -xzf dist/safe-stick-release.tar.gz
+tar -xzf dist/safe-stick-0.2.0.tar.gz
 cd safe-stick
 ./safe-stick
 ```
 
-The bundle includes the executable, tracked `scripts/` files, `README.md`, and `License.txt`. Creating it requires the `main` branch and a clean Git working tree.
+The archive name includes the version from `safe-stick/Cargo.toml` (the example above uses `0.2.0`). The bundle includes the executable, tracked `scripts/` files, `README.md`, and `License.txt`. Creating it requires the `main` branch and a clean Git working tree.
 
 ### ISO tab
 

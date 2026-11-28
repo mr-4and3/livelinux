@@ -212,6 +212,7 @@ This creates a live USB with:
 
 ```bash
 ./configure.sh
+. "$HOME/.cargo/env"
 cargo run --manifest-path safe-stick/Cargo.toml
 ```
 
