@@ -398,7 +398,7 @@ Currently, **Make USB** passes the selected device to the script but does not pa
 
 ### Terminal and application settings
 
-The terminal at the bottom displays command output and supports interactive commands and prompts. Use **Interrupt** to stop a running action, **Clear** to clear the terminal, and the terminal session selector to switch between sessions. Copy and paste controls are provided for terminal text. Only one workflow action runs at a time.
+The terminal at the bottom displays command output and supports interactive commands and prompts. Use the mouse wheel over the terminal to navigate its scrollback. Use **Interrupt** to stop a running action, **Clear** to clear the terminal, and the terminal session selector to switch between sessions. Copy and paste controls are provided for terminal text. The **Log** tab replaces the terminal with a full-height, scrollable list of commands started by action buttons, including USB device refresh, during the current application run. Long commands wrap to the available width. Only one workflow action runs at a time.
 
 The **About** tab displays the application version. **Install** checks and installs the host packages required by the shell workflows; it may request administrator authorization and add the user to the `kvm` group. If the group membership changes, log out and back in for it to take effect. **Default** resets the GUI settings to their initial values.
 

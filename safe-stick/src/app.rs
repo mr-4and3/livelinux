@@ -38,6 +38,7 @@ impl Default for ConsoleState {
 enum TopTab {
     Iso,
     Usb,
+    Log,
     About,
 }
 
@@ -78,6 +79,7 @@ pub struct ShellGuiApp {
     console: Arc<Mutex<ConsoleState>>,
     terminal_sessions: Vec<TerminalSession>,
     selected_terminal_id: Option<u64>,
+    command_log: Vec<String>,
 
     // Infos states
     path_to_iso_info: String,
@@ -104,6 +106,10 @@ pub struct ShellGuiApp {
 
 // Implement methods for the ShellGuiApp,
 impl ShellGuiApp {
+    fn log_command(&mut self, command: &str) {
+        self.command_log.push(format!("$ {command}"));
+    }
+
     // Constructor to create a new instance of ShellGuiApp with the provided script manager and configuration
     pub fn new(script_manager: Arc<EmbeddedScriptManager>, config: ConfigManager) -> Self {
         let (install_required, install_info) = match script_manager.check_required_packages() {
@@ -131,6 +137,7 @@ impl ShellGuiApp {
             console: Arc::new(Mutex::new(ConsoleState::default())),
             terminal_sessions: Vec::new(),
             selected_terminal_id: None,
+            command_log: Vec::new(),
 
             path_to_iso_info: String::new(),
             work_directory_info: String::new(),
@@ -159,6 +166,7 @@ impl ShellGuiApp {
     }
 
     fn refresh_usb_sticks(&mut self) {
+        self.log_command("st-usb.sh list-sticks");
         match self.script_manager.list_usb_sticks() {
             Ok(sticks) => {
                 self.usb_device_info = if sticks.is_empty() {
@@ -372,6 +380,8 @@ impl ShellGuiApp {
                 return;
             }
         };
+
+        self.log_command(display);
 
         match self.console.lock() {
             Ok(mut console) => {
@@ -898,6 +908,16 @@ impl ShellGuiApp {
             ]);
         }
 
+        if !self.path_custom_iso.is_empty() {
+            args.extend([
+                "--iso".to_owned(),
+                self.path_custom_iso.clone(),
+            ]);
+        }
+        else {
+            return Err("Path to custom ISO is empty.".to_string());
+        }
+
         args.push("update-linux".to_owned());
 
         let display = std::iter::once("st-usb.sh".to_owned())
@@ -1123,7 +1143,7 @@ impl eframe::App for ShellGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let (process_active, active_function) = self.process_status();
 
-        if matches!(self.current_tab, TopTab::About) {
+        if matches!(self.current_tab, TopTab::About | TopTab::Log) {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui
@@ -1139,6 +1159,12 @@ impl eframe::App for ShellGuiApp {
                         self.current_tab = TopTab::Usb;
                     }
                     if ui
+                        .selectable_label(matches!(self.current_tab, TopTab::Log), "Log")
+                        .clicked()
+                    {
+                        self.current_tab = TopTab::Log;
+                    }
+                    if ui
                         .selectable_label(matches!(self.current_tab, TopTab::About), "About")
                         .clicked()
                     {
@@ -1146,31 +1172,63 @@ impl eframe::App for ShellGuiApp {
                     }
                 });
                 ui.separator();
-                ui.heading("Safe Stick");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                let install_enabled = self.install_required && !process_active;
-                let install_hover_text = if process_active {
-                    "Another process is currently running.".to_string()
-                } else {
-                    self.install_info.clone()
-                };
-                let install_button = ui
-                    .add_enabled(install_enabled, egui::Button::new("Install"))
-                    .on_disabled_hover_text(install_hover_text);
-                if install_button.clicked() {
-                    if let Err(error) = self.install_function(ctx) {
-                        self.append_output(&format!("\r\n{error}\r\n"));
+
+                match self.current_tab {
+                    TopTab::About => {
+                        ui.heading("Safe Stick");
+                        ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                        let install_enabled = self.install_required && !process_active;
+                        let install_hover_text = if process_active {
+                            "Another process is currently running.".to_string()
+                        } else {
+                            self.install_info.clone()
+                        };
+                        let install_button = ui
+                            .add_enabled(install_enabled, egui::Button::new("Install"))
+                            .on_disabled_hover_text(install_hover_text);
+                        if install_button.clicked() {
+                            if let Err(error) = self.install_function(ctx) {
+                                self.append_output(&format!("\r\n{error}\r\n"));
+                            }
+                            self.current_tab = TopTab::Iso;
+                        }
+                        if ui
+                            .add_enabled(!process_active, egui::Button::new("Default"))
+                            .clicked()
+                        {
+                            self.reset_config_to_defaults();
+                        }
+                        if let Some(message) = &self.config_message {
+                            ui.label(message);
+                        }
                     }
-                    self.current_tab = TopTab::Iso;
-                }
-                if ui
-                    .add_enabled(!process_active, egui::Button::new("Default"))
-                    .clicked()
-                {
-                    self.reset_config_to_defaults();
-                }
-                if let Some(message) = &self.config_message {
-                    ui.label(message);
+                    TopTab::Log => {
+                        ui.heading("Command log");
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                if self.command_log.is_empty() {
+                                    ui.label(
+                                        "No commands have been started from the action buttons yet.",
+                                    );
+                                } else {
+                                    for (index, command) in self.command_log.iter().enumerate() {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(format!(
+                                                    "{}. {command}",
+                                                    index + 1
+                                                ))
+                                                .monospace(),
+                                            )
+                                            .wrap(),
+                                        );
+                                    }
+                                }
+                            });
+                    }
+                    TopTab::Iso | TopTab::Usb => {}
                 }
             });
             return;
@@ -1193,6 +1251,12 @@ impl eframe::App for ShellGuiApp {
                         .clicked()
                     {
                         self.current_tab = TopTab::Usb;
+                    }
+                    if ui
+                        .selectable_label(matches!(self.current_tab, TopTab::Log), "Log")
+                        .clicked()
+                    {
+                        self.current_tab = TopTab::Log;
                     }
                     if ui
                         .selectable_label(matches!(self.current_tab, TopTab::About), "About")
@@ -1478,6 +1542,7 @@ impl eframe::App for ShellGuiApp {
                             }
                         });
                     }
+                    TopTab::Log => {}
                     TopTab::About => {}
                 }
             });
