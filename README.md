@@ -208,35 +208,14 @@ This creates a live USB with:
 
 ## Safe Stick frontend
 
-`safe-stick/` is the Rust GUI frontend planned for the repository's `st-*` scripts. The goal is to make the ISO build, USB deployment, and related workflows available from one application, with configuration fields and an interactive terminal for command output and prompts.
-
-The frontend is under development; the ISO **Extract** action runs the embedded `scripts/st-iso.sh` with the configured ISO, work directory, and output path. At build time, all Git-tracked files under `scripts/` are embedded, and the app restores that directory structure into a temporary directory at startup so the scripts can use their relative paths. Untracked files, such as downloaded build artifacts, are not embedded. Other GUI actions are not all connected yet, so the existing shell scripts remain the supported way to run the remaining workflows described above.
-
-Build and run the GUI from the repository root with:
+`safe-stick/` is a Rust GUI in development for the ISO build and USB management workflows. Install the build dependencies and start it from the repository root with:
 
 ```bash
+./configure.sh
 cargo run --manifest-path safe-stick/Cargo.toml
 ```
 
-Create a locally unpackable release bundle containing the GUI and tracked scripts with:
-
-```bash
-make release-bundle
-tar -xzf dist/safe-stick-release.tar.gz
-cd safe-stick
-./safe-stick
-```
-
-The bundle runs from its extracted directory and includes the `scripts/` tree,
-`README.md`, and `License.txt`.
-`make release-bundle` requires the `main` branch and a clean Git working tree.
-
-Once the workflow is on the default branch, GitHub Actions runs
-`make patch-version` for pull requests in its temporary runner and checks that
-the generated version matches `safe-stick/Cargo.toml`. The change is not
-committed to the PR branch; the workflow only validates the version bump.
-
-The About tab shows the frontend version from `safe-stick/Cargo.toml`.
+See the [Safe Stick GUI section in the manual](DOC-MANUAL.md#safe-stick-gui) for setup details, available actions, and usage instructions.
 
 ## Notes
 
