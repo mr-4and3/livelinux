@@ -369,7 +369,7 @@ The archive name includes the version from `safe-stick/Cargo.toml` (the example 
 
 ### ISO tab
 
-The ISO tab contains fields for the source ISO, output ISO, work directory, customization script, and password script. Use **Browse...** to choose files or a directory. The embedded customization and password scripts are selected by default; alternative script paths can be entered when needed. Settings are saved in `~/.config/safe-stick/config.json` when the application exits.
+The ISO tab contains fields for the source ISO, output ISO, work directory, customization script, and password script. Use **Browse...** to choose files or a directory. For **Custom ISO**, Browse opens a save dialog: select an existing ISO or enter a new filename; the `.iso` extension is applied automatically if needed. The embedded customization and password scripts are selected by default; alternative script paths can be entered when needed. Settings are saved in `~/.config/safe-stick/config.json` when the application exits.
 
 The available actions are:
 

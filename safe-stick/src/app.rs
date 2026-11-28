@@ -41,6 +41,13 @@ enum TopTab {
     About,
 }
 
+#[derive(Clone, Copy)]
+enum PathPickerKind {
+    ExistingFile,
+    Directory,
+    SaveIso,
+}
+
 // Main application struct for the shell GUI
 pub struct ShellGuiApp {
     script_manager: Arc<EmbeddedScriptManager>,
@@ -1068,7 +1075,7 @@ impl ShellGuiApp {
                 Err(_) => "Customized ISO not found.".to_string(),
             }
         };
-        self.path_to_iso_info.is_empty()
+        self.custom_iso_info.is_empty()
     }
 
 
@@ -1206,38 +1213,39 @@ impl eframe::App for ShellGuiApp {
                                 .spacing([40.0, 10.0])
                                 .show(ui, |ui| {
                                     path_input(
-                                        ui, "Path to ISO:", 
-                                        &mut self.path_to_iso, 
-                                        false, 
-                                        self.path_to_iso_info.clone().as_str()
+                                        ui,
+                                        "Path to ISO:",
+                                        &mut self.path_to_iso,
+                                        PathPickerKind::ExistingFile,
+                                        self.path_to_iso_info.clone().as_str(),
                                     );
                                     path_input(
                                         ui,
                                         "Custom ISO:",
                                         &mut self.path_custom_iso,
-                                        false,
+                                        PathPickerKind::SaveIso,
                                         self.custom_iso_info.clone().as_str(),
                                     );
                                     path_input(
                                         ui,
                                         "Work Directory:",
                                         &mut self.work_directory,
-                                        true,
-                                        self.work_directory_info.clone().as_str()
+                                        PathPickerKind::Directory,
+                                        self.work_directory_info.clone().as_str(),
                                     );
                                     path_input(
                                         ui,
                                         "Customize Script:",
                                         &mut self.customize_script,
-                                        false,
-                                        self.customize_script_path_info.clone().as_str()
+                                        PathPickerKind::ExistingFile,
+                                        self.customize_script_path_info.clone().as_str(),
                                     );
                                     path_input(
                                         ui,
                                         "Password Script:",
                                         &mut self.password_script,
-                                        false,
-                                        self.password_script_path_info.clone().as_str()
+                                        PathPickerKind::ExistingFile,
+                                        self.password_script_path_info.clone().as_str(),
                                     );
                                 });
 
@@ -1610,11 +1618,13 @@ fn is_usb_device_detected(device: &str, sticks: &[UsbStick]) -> bool {
 }
 
 // Helper function to create a labeled path input field with a "Browse..." button
-fn path_input(ui: &mut egui::Ui, 
-    label: &str, 
-    value: &mut String, 
-    directory: bool,
-    info_text: &str) {
+fn path_input(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    picker_kind: PathPickerKind,
+    info_text: &str,
+) {
     ui.label(label);
     ui.horizontal(|ui| {
         let response = ui.text_edit_singleline(value);
@@ -1623,7 +1633,8 @@ fn path_input(ui: &mut egui::Ui,
         }
         if ui.button("Browse...").clicked() {
             let current_path = Path::new(value);
-            let initial_directory = if directory && current_path.is_dir() {
+            let is_directory = matches!(picker_kind, PathPickerKind::Directory);
+            let initial_directory = if is_directory && current_path.is_dir() {
                 Some(current_path)
             } else {
                 current_path.parent().filter(|path| path.is_dir())
@@ -1633,10 +1644,21 @@ fn path_input(ui: &mut egui::Ui,
                 None => rfd::FileDialog::new(),
             };
 
-            let selected_path = if directory {
-                dialog.pick_folder()
-            } else {
-                dialog.pick_file()
+            let selected_path = match picker_kind {
+                PathPickerKind::Directory => dialog.pick_folder(),
+                PathPickerKind::ExistingFile => dialog.pick_file(),
+                PathPickerKind::SaveIso => {
+                    let file_name = current_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("custom.iso");
+                    dialog
+                        .add_filter("ISO images", &["iso"])
+                        .set_file_name(file_name)
+                        .set_title("Select or create an ISO file")
+                        .save_file()
+                        .map(ensure_iso_extension)
+                }
             };
             if let Some(selected_path) = selected_path {
                 *value = selected_path.display().to_string();
@@ -1645,6 +1667,17 @@ fn path_input(ui: &mut egui::Ui,
         ui.label(info_text);
     });
     ui.end_row();
+}
+
+fn ensure_iso_extension(mut path: PathBuf) -> PathBuf {
+    let has_iso_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("iso"));
+    if !has_iso_extension {
+        path.set_extension("iso");
+    }
+    path
 }
 
 fn interrupt_button(
@@ -1699,6 +1732,22 @@ mod tests {
         assert!(!is_custom_script("  embedded_script  "));
         assert!(!is_custom_script(""));
         assert!(is_custom_script("/tmp/customize.sh"));
+    }
+
+    #[test]
+    fn save_iso_path_has_iso_extension() {
+        assert_eq!(
+            ensure_iso_extension(PathBuf::from("/tmp/custom-image")),
+            PathBuf::from("/tmp/custom-image.iso")
+        );
+        assert_eq!(
+            ensure_iso_extension(PathBuf::from("/tmp/custom-image.ISO")),
+            PathBuf::from("/tmp/custom-image.ISO")
+        );
+        assert_eq!(
+            ensure_iso_extension(PathBuf::from("/tmp/custom-image.txt")),
+            PathBuf::from("/tmp/custom-image.iso")
+        );
     }
 
     #[test]
